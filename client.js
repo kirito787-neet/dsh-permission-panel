@@ -788,8 +788,8 @@ window.__ModuleLoader__.load({
 
 		/*
 		 * What the seat reads before its per-session directory is resolvable. The status
-		 * is "loading" on purpose: the menu only paints a row for "loading"/"ready" and
-		 * an "idle" status would render the search box above an empty menu.
+		 * is "loading" on purpose: the model pane only paints a row for "loading"/"ready"
+		 * and an "idle" status would render the search box above an empty list.
 		 *
 		 * Frozen and shared: React re-reads getSnapshot every render and only bails out
 		 * when the value is cached, so a fresh object literal would crash the seat.
@@ -1029,8 +1029,14 @@ window.__ModuleLoader__.load({
 			};
 		}
 		/**
-		 * The composer's model seat: the official two-level Model/Effort menu with a
-		 * model search field on top of the provider-grouped list.
+		 * The composer's model seat: the official two-level menu, kept exactly as
+		 * shipped - the root level holds the Model / Effort rows and each drills into
+		 * its own list - with the model list additionally carrying a search field.
+		 *
+		 * The field lives in the MODEL pane, directly above the provider-grouped
+		 * options it filters, so the level the user searches on is the level that
+		 * shows the results. Opening the menu therefore lands on the root rows, and
+		 * "Model" drills into the searchable list.
 		 *
 		 * Registered at a LOWER priority than the shipped seat, so this renders while
 		 * the plugin is live and the official seat returns untouched on unload or on any
@@ -1059,7 +1065,7 @@ window.__ModuleLoader__.load({
 				};
 			}, [rawState]);
 			const [open, setOpen] = React.useState(false);
-			const [pane, setPane] = React.useState("model");
+			const [pane, setPane] = React.useState("root");
 			const [query, setQuery] = React.useState("");
 			const [menuPos, setMenuPos] = React.useState(null);
 			const [failure, setFailure] = React.useState(null);
@@ -1145,13 +1151,19 @@ window.__ModuleLoader__.load({
 			}, [open, pane, state, query]);
 			React.useEffect(() => {
 				if (!open || pane !== "model" || menuPos === null) return;
-				searchRef.current?.focus();
+				/*
+				 * The search field is the point of this pane, so it takes focus as soon
+				 * as the model list is on screen - but only once its position has been
+				 * measured, and never while the field is already focused (a fresh focus()
+				 * on every render would fight the user's selection).
+				 */
+				if (document.activeElement !== searchRef.current) searchRef.current?.focus();
 			}, [open, pane, menuPos]);
 
 			if (!available) return null;
 
 			const show = () => {
-				setPane("model");
+				setPane("root");
 				setQuery("");
 				setFailure(null);
 				setOpen(true);
@@ -1159,7 +1171,7 @@ window.__ModuleLoader__.load({
 			};
 			const close = (restoreFocus = false) => {
 				setOpen(false);
-				setPane("model");
+				setPane("root");
 				setQuery("");
 				if (restoreFocus) queueMicrotask(() => {
 					triggerRef.current?.focus();
@@ -1176,8 +1188,8 @@ window.__ModuleLoader__.load({
 					event.preventDefault();
 					if (query !== "") {
 						setQuery("");
-					} else if (pane === "effort") {
-						setPane("model");
+					} else if (pane !== "root") {
+						setPane("root");
 					} else close(true);
 					return;
 				}
@@ -1236,7 +1248,6 @@ window.__ModuleLoader__.load({
 				};
 			};
 
-			const modelPane = [];
 			const searchField = React.createElement("div", { className: "dshk-searchWrap", key: "search" }, React.createElement("div", { className: "dshk-search" }, [
 				React.createElement(SearchIcon, { key: "icon" }),
 				React.createElement("input", {
@@ -1270,8 +1281,27 @@ window.__ModuleLoader__.load({
 					onClick: () => setQuery(""),
 				}, React.createElement(ClearIcon, {})),
 			]));
-			modelPane.push(searchField);
-			if (reasoning !== void 0) modelPane.push(React.createElement("button", {
+			/*
+			 * Root level, mirroring the shipped seat: one "Model" cell (the current
+			 * model, drilling into the searchable list) and, when the model exposes
+			 * levels, one "Effort" cell. The search field belongs to the MODEL pane, so
+			 * it sits directly over the model options it filters instead of above the
+			 * Model/Effort rows.
+			 */
+			const rootPane = [];
+			rootPane.push(React.createElement("button", {
+				ref: itemRef(),
+				type: "button",
+				role: "menuitem",
+				className: "dshk-cell",
+				key: "model",
+				onClick: () => setPane("model"),
+			}, [
+				React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.model")),
+				React.createElement("span", { className: "dshk-cellValue", key: "v" }, modelLabel),
+				React.createElement(ChevronRight, { key: "c" }),
+			]));
+			if (reasoning !== void 0) rootPane.push(React.createElement("button", {
 				ref: itemRef(),
 				type: "button",
 				role: "menuitem",
@@ -1283,6 +1313,8 @@ window.__ModuleLoader__.load({
 				React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
 				React.createElement(ChevronRight, { key: "c" }),
 			]));
+			const modelPane = [];
+			modelPane.push(searchField);
 			if (state.status === "loading") modelPane.push(React.createElement("div", { className: "dshk-status", key: "loading" }, [
 				React.createElement("div", { key: "text" }, t("status.loading")),
 				/*
@@ -1336,14 +1368,20 @@ window.__ModuleLoader__.load({
 			}, state.error === null ? t("empty.models") : t("loadFailed", { message: state.error })));
 
 			const panes = [];
-			if (pane === "effort") {
+			if (pane === "root") {
+				panes.push(...rootPane);
+			} else if (pane === "effort") {
+				/*
+				 * Back returns to the ROOT rows, not straight to the model list: with the
+				 * shipped two-level shape restored, "back" means one level up.
+				 */
 				panes.push(React.createElement("button", {
 					ref: itemRef(),
 					type: "button",
 					role: "menuitem",
 					className: "dshk-cell",
 					key: "back",
-					onClick: () => setPane("model"),
+					onClick: () => setPane("root"),
 				}, [
 					React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.back")),
 					React.createElement("span", { className: "dshk-cellValue", key: "v" }, t("menu.effort")),

@@ -1,9 +1,10 @@
 /**
- * Real-DOM check for the model seat's first-level search box (optional suite).
+ * Real-DOM check for the model seat's second-level search box (optional suite).
  *
  * Renders the plugin's ModelSelect through real React + jsdom — not a stub — and
- * drives it the way a user does: click the trigger, confirm the search box sits
- * above the model options in the menu that opens first, type a query, press Enter.
+ * drives it the way a user does: click the trigger, confirm the root level holds
+ * the shipped Model / Effort rows, drill into "Model", confirm the search box sits
+ * above the model options there, type a query, press Enter.
  *
  * Requires react, react-dom and jsdom to be resolvable from DSH_DOMTEST_DIR.
  * Skips itself (exit 0) when they are absent, so `npm test` stays dependency-free.
@@ -39,12 +40,12 @@ const React = req("react");
 const ReactDOMClient = req("react-dom/client");
 const act = React.act ?? req("react-dom/test-utils").act;
 /**
- * Real-DOM verification of the model seat's first-level search box.
+ * Real-DOM verification of the model seat's second-level search box.
  *
  * Renders the plugin's ModelSelect through real React 18 + jsdom (not a stub),
- * then drives it the way a user does: click the trigger, confirm the search box
- * sits above the model options in the menu that opens first, type a query, and
- * press Enter to switch models.
+ * then drives it the way a user does: click the trigger, confirm the root level
+ * holds the Model / Effort rows, drill into "Model", confirm the search box sits
+ * above the model options there, type a query, and press Enter to switch models.
  */
 
 // React 18.3 exports act directly; fall back for older minors.
@@ -165,11 +166,20 @@ const fail = (message) => { console.error("DOM CHECK FAILED:", message); process
   if (trigger === null) fail("no model trigger rendered");
   if (document.querySelector(".dshk-searchInput") !== null) fail("the search box rendered while the menu was closed");
 
-  // open the menu — this is the FIRST level the user sees
+  // open the menu — the root level the user sees first
   await act(async () => { trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
 
+  const cells = [...document.querySelectorAll(".dshk-cell")];
+  if (cells.length !== 2) fail("the root level should hold the Model and Effort rows, saw " + cells.length);
+  if (document.querySelector(".dshk-searchInput") !== null) fail("the root level renders the search box");
+
+  // drill into the model list — the level that carries the search field
+  const modelCell = cells.find((node) => node.textContent.includes("模型"));
+  if (modelCell === undefined) fail("the root menu offers no model drill-in row");
+  await act(async () => { modelCell.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+
   const input = document.querySelector(".dshk-searchInput");
-  if (input === null) fail("the first-level menu has no search box");
+  if (input === null) fail("the model list has no search box");
   const menu = document.querySelector(".dshk-menu");
   if (menu === null) fail("the menu did not render");
 
@@ -202,7 +212,7 @@ const fail = (message) => { console.error("DOM CHECK FAILED:", message); process
   if (selectCalls.length !== 1) fail("Enter did not switch models, calls=" + JSON.stringify(selectCalls));
   if (selectCalls[0].model !== "beta-2") fail("Enter selected " + JSON.stringify(selectCalls[0]));
 
-  console.log("DOM CHECK OK: search box is first in the menu, placeholder=" + JSON.stringify(placeholder) +
+  console.log("DOM CHECK OK: search box is first in the model list, placeholder=" + JSON.stringify(placeholder) +
     ", filter narrowed 3 -> 1, Enter selected " + selectCalls[0].model);
   process.exit(0);
 })().catch((error) => fail(error.message));

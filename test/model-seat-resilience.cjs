@@ -129,7 +129,10 @@ const fail = (message) => {
   // A store's subscribe must be referentially stable, or React resubscribes forever.
   const STABLE_SUBSCRIBE = () => () => {};
 
-  /** Mount the seat, open its menu, and report whether the search box rendered. */
+  /**
+   * Mount the seat, open its menu, drill into the model list, and report whether
+   * the search box rendered there.
+   */
   const openMenu = async (snapshot) => {
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -145,6 +148,10 @@ const fail = (message) => {
       if (trigger !== null) {
         await act(async () => { trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
       }
+      const cell = [...document.querySelectorAll(".dshk-cell")].find((node) => node.textContent.includes("模型"));
+      if (cell !== undefined) {
+        await act(async () => { cell.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+      }
     } catch (error) {
       await act(async () => { root.unmount(); });
       host.remove();
@@ -153,7 +160,17 @@ const fail = (message) => {
     const rendered = document.querySelector(".dshk-searchInput") !== null;
     await act(async () => { root.unmount(); });
     host.remove();
-    return { ok: rendered, reason: rendered ? "" : "the menu opened without a search box" };
+    return { ok: rendered, reason: rendered ? "" : "the model list opened without a search box" };
+  };
+
+  /** Click the trigger on `host` and drill into the model list. */
+  const drillIntoModels = async (host) => {
+    const trigger = host.querySelector(".dshk-trigger");
+    if (trigger === null) fail("the model button is missing");
+    await act(async () => { trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+    const cell = [...document.querySelectorAll(".dshk-cell")].find((node) => node.textContent.includes("模型"));
+    if (cell === undefined) fail("the root menu offers no model drill-in row");
+    await act(async () => { cell.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   };
 
   // Snapshots a cold boot can publish. Every one must still show the search box.
@@ -299,6 +316,9 @@ const fail = (message) => {
   const coldTrigger = coldHost.querySelector(".dshk-trigger");
   if (coldTrigger === null) fail("the model button is missing for a cold session");
   await act(async () => { coldTrigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const coldCell = [...document.querySelectorAll(".dshk-cell")].find((node) => node.textContent.includes("模型"));
+  if (coldCell === undefined) fail("a cold session did not render the model drill-in row");
+  await act(async () => { coldCell.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   if (document.querySelector(".dshk-searchInput") === null) fail("the search box is missing for a cold session");
   // A bare search box over nothing is the bug: there must be a visible status row.
   const coldRows = document.querySelectorAll("[role=menuitemradio]").length;
@@ -352,9 +372,7 @@ const fail = (message) => {
   await act(async () => { preloadRoot.render(React.createElement(PreloadSeat)); });
   // Menu still closed here: mounting alone must have warmed the catalog.
   if (preloadCalls === 0) fail("the catalog was not warmed when the seat mounted");
-  const preloadTrigger = preloadHost.querySelector(".dshk-trigger");
-  if (preloadTrigger === null) fail("the model button is missing in the preload case");
-  await act(async () => { preloadTrigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await drillIntoModels(preloadHost);
   // The first open must show the list at once - no loading placeholder.
   const instantRows = document.querySelectorAll("[role=menuitemradio]").length;
   if (instantRows !== 2) fail("the first open did not show models immediately, rows=" + instantRows);
@@ -455,7 +473,7 @@ const fail = (message) => {
   }
   if (flakyLoads < 2) fail("the failed warm-up was not retried; load() ran only " + flakyLoads + " time(s)");
   // And the menu must then show the models at once.
-  await act(async () => { flakyHost.querySelector(".dshk-trigger").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await drillIntoModels(flakyHost);
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
   const flakyRows = document.querySelectorAll("[role=menuitemradio]").length;
   if (flakyRows !== 2) fail("the retried warm-up did not surface the models, rows=" + flakyRows);

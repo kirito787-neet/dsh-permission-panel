@@ -1,10 +1,11 @@
 /**
- * Model-seat test: the search box in the first-level model menu.
+ * Model-seat test: the search box in the second-level MODEL menu.
  *
  * Loads the real client.js through a stubbed module loader and drives the seat's
- * menu the way a user does — open the trigger, type a query, press Enter, press
- * Escape — asserting the search box sits above the model options in the menu that
- * opens first.
+ * menu the way a user does — open the trigger, drill into "Model", type a query,
+ * press Enter, press Escape — asserting the shipped two-level shape is preserved
+ * and that the search box sits above the model options on the level that lists
+ * them.
  *
  * The locale stub mirrors the Host's real resolution rule (namespace-only lookup,
  * NO cross-namespace fallback), so a string that lives in the wrong namespace
@@ -202,10 +203,27 @@ const renderSeat = () => {
 const triggerOf = (tree) => collect(tree, (entry) => entry.props?.className === "dshk-trigger")[0];
 const searchInputOf = (tree) => collect(tree, (entry) => entry.props?.className === "dshk-searchInput")[0];
 const modelOptionsOf = (tree) => collect(tree, (entry) => entry.props?.role === "menuitemradio");
+/** A root-level drill-in row ("模型" / "思考强度" / "返回"), identified by its label. */
+const cellOf = (tree, label) => collect(tree, (entry) => entry.props?.className === "dshk-cell" && textOf(entry).includes(label))[0];
+/**
+ * Mount fresh, open the trigger, drill into the searchable model list, and return
+ * that tree. Starting from a clean mount keeps this usable whatever level an
+ * earlier case left the menu on.
+ */
+const openModelPane = () => {
+  hookSlots.clear();
+  let next = renderSeat();
+  triggerOf(next).props.onClick();
+  next = renderSeat();
+  const cell = cellOf(next, "模型");
+  if (cell === undefined) fail("the root menu offers no \"模型\" drill-in row");
+  cell.props.onClick();
+  return renderSeat();
+};
 
 const fail = (message) => { console.error("model-seat FAILED:", message); process.exit(1); };
 
-// ---- case 1: opening the trigger lands on the searchable model list ----
+// ---- case 1: opening the trigger lands on the shipped root rows ----
 // The menu starts CLOSED, so the click below is a genuine first open — the level
 // it lands on is the first-level menu the user sees.
 hookSlots.clear();
@@ -217,18 +235,23 @@ if (trigger === undefined) fail("case 1: no model trigger rendered");
 trigger.props.onClick();
 tree = renderSeat();
 if (portalCalls.length === 0) fail("case 1: opening the menu never rendered a portal");
-const search = searchInputOf(tree);
-if (search === undefined) fail("case 1: the first-level menu has no search box");
-const options = modelOptionsOf(tree);
-if (options.length === 0) fail("case 1: the first-level menu has no model options");
+const rootCells = collect(tree, (entry) => entry.props?.className === "dshk-cell");
+if (rootCells.length !== 2) fail("case 1: the root level should hold the Model and Effort rows, saw " + rootCells.length);
+if (searchInputOf(tree) !== undefined) fail("case 1: the root level still renders the search box — it belongs to the model list");
+if (modelOptionsOf(tree).length !== 0) fail("case 1: the root level lists models directly instead of drilling in");
 
-// ---- case 2: the search box sits ABOVE the model options ----
+// ---- case 2: the search box lives in the second-level MODEL list, above the options ----
+tree = openModelPane();
+const search = searchInputOf(tree);
+if (search === undefined) fail("case 2: the model list has no search box");
+const options = modelOptionsOf(tree);
+if (options.length === 0) fail("case 2: the model list has no model options");
 const order = [];
 walk(tree, (entry) => {
   if (entry.props?.className === "dshk-searchInput") order.push("search");
   if (entry.props?.role === "menuitemradio") order.push("option");
 });
-if (order[0] !== "search") fail("case 2: the search box is not the first control in the menu, saw " + JSON.stringify(order.slice(0, 4)));
+if (order[0] !== "search") fail("case 2: the search box is not the first control in the model list, saw " + JSON.stringify(order.slice(0, 4)));
 if (order.filter((entry) => entry === "search").length !== 1) fail("case 2: expected exactly one search box");
 
 // ---- case 3: the placeholder is a real translation, not a raw dictionary key ----
@@ -253,10 +276,11 @@ if (!prevented) fail("case 5: Enter was not consumed by the search box");
 if (selectCalls.length !== 1) fail("case 5: Enter did not select a model, calls=" + JSON.stringify(selectCalls));
 if (selectCalls[0].provider !== "prov-a" || selectCalls[0].model !== "beta-2") fail("case 5: Enter selected " + JSON.stringify(selectCalls[0]));
 
-// ---- case 6: Escape clears the query, then closes the menu ----
+// ---- case 6: Escape unwinds one level at a time ----
 // The container owns the Escape semantics; the input only intercepts it while a
 // query is present. In the DOM an unconsumed key bubbles to the container, so the
-// harness replays that path explicitly.
+// harness replays that path explicitly. Unwinding is level by level: query ->
+// model list -> root rows -> closed.
 const rootOf = (candidate) => collect(candidate, (entry) => entry.props?.className === "dshk-root")[0];
 tree = renderSeat();
 searchInputOf(tree).props.onKeyDown({ key: "Escape", preventDefault: () => {}, stopPropagation: () => {} });
@@ -266,24 +290,32 @@ const escaped = searchInputOf(tree).props.onKeyDown({ key: "Escape", preventDefa
 if (escaped !== undefined) fail("case 6: the empty-query input still swallowed Escape");
 rootOf(tree).props.onKeyDown({ key: "Escape", preventDefault: () => {}, stopPropagation: () => {} });
 tree = renderSeat();
-if (searchInputOf(tree) !== undefined) fail("case 6: Escape on an empty query did not close the menu");
+if (searchInputOf(tree) !== undefined) fail("case 6: Escape left the model list but kept the search box");
+if (collect(tree, (entry) => entry.props?.className === "dshk-cell").length !== 2) fail("case 6: Escape did not return to the root rows");
+rootOf(tree).props.onKeyDown({ key: "Escape", preventDefault: () => {}, stopPropagation: () => {} });
+tree = renderSeat();
+if (collect(tree, (entry) => entry.props?.className === "dshk-cell").length !== 0) fail("case 6: Escape on the root rows did not close the menu");
 
-// ---- case 7: the effort drill-in stays reachable from the first-level menu ----
+// ---- case 7: the effort drill-in stays reachable from the root rows ----
 hookSlots.clear();
 tree = renderSeat();
 triggerOf(tree).props.onClick();
 tree = renderSeat();
-const effortCell = collect(tree, (entry) => entry.props?.className === "dshk-cell" && textOf(entry).includes("思考强度"))[0];
-if (effortCell === undefined) fail("case 7: the effort drill-in is missing from the first-level menu");
+const effortCell = cellOf(tree, "思考强度");
+if (effortCell === undefined) fail("case 7: the effort drill-in is missing from the root rows");
 effortCell.props.onClick();
 tree = renderSeat();
 const effortOptions = collect(tree, (entry) => entry.props?.role === "menuitemradio" && ["Low", "High"].includes(textOf(entry).trim()));
 if (effortOptions.length === 0) fail("case 7: the effort pane rendered no levels");
-const back = collect(tree, (entry) => entry.props?.className === "dshk-cell" && textOf(entry).includes("返回"))[0];
-if (back === undefined) fail("case 7: the effort pane offers no way back to the model list");
+const back = cellOf(tree, "返回");
+if (back === undefined) fail("case 7: the effort pane offers no way back");
 back.props.onClick();
 tree = renderSeat();
-if (searchInputOf(tree) === undefined) fail("case 7: going back from effort did not restore the model list");
+const modelCell = cellOf(tree, "模型");
+if (modelCell === undefined) fail("case 7: going back from effort did not restore the root rows");
+modelCell.props.onClick();
+tree = renderSeat();
+if (searchInputOf(tree) === undefined) fail("case 7: the searchable model list is unreachable from the root rows");
 
 // ---- case 8: both seat dictionaries stay key-identical ----
 const zhKeys = Object.keys(seatZh).sort().join(",");
