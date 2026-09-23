@@ -314,6 +314,54 @@ const fail = (message) => {
   await act(async () => { coldRoot.unmount(); });
   coldHost.remove();
 
+  // The catalog must be warmed when the seat MOUNTS, not when the menu opens:
+  // otherwise the first open always waits on a Host round-trip and the user sees
+  // "Loading models..." instead of the list.
+  bindingReady = true;
+  let preloadCalls = 0;
+  let preloadSnapshot = { current: null, status: "idle", error: null, groups: [], failures: [] };
+  const preloadListeners = new Set();
+  const preloadStore = {
+    subscribe: (listener) => { preloadListeners.add(listener); return () => preloadListeners.delete(listener); },
+    getSnapshot: () => preloadSnapshot,
+    emit: (next) => { preloadSnapshot = next; for (const listener of [...preloadListeners]) listener(); },
+  };
+  directoryForImpl = () => ({
+    store: preloadStore,
+    load: () => {
+      preloadCalls += 1;
+      preloadStore.emit(readySnapshot);
+      return Promise.resolve(readySnapshot);
+    },
+    select: () => Promise.resolve(true),
+  });
+  let preloadFace = null;
+  const preloadScope = {
+    ...scope,
+    slots: { inject: (name, factory) => factory(), register: (options) => { if (options.inject) preloadFace = options.inject("session-preload"); return () => {}; } },
+  };
+  plugin.apply(makeCtx(preloadScope));
+  if (preloadFace === null) fail("the seat registration aborted for the preload case");
+  const preloadHost = document.createElement("div");
+  document.body.appendChild(preloadHost);
+  const preloadRoot = ReactDOMClient.createRoot(preloadHost);
+  const PreloadSeat = () => React.createElement(ModelSeat, {
+    locked: false, available: preloadFace.available, directory: preloadFace.directory,
+    load: preloadFace.load, select: preloadFace.select, t,
+  });
+  await act(async () => { preloadRoot.render(React.createElement(PreloadSeat)); });
+  // Menu still closed here: mounting alone must have warmed the catalog.
+  if (preloadCalls === 0) fail("the catalog was not warmed when the seat mounted");
+  const preloadTrigger = preloadHost.querySelector(".dshk-trigger");
+  if (preloadTrigger === null) fail("the model button is missing in the preload case");
+  await act(async () => { preloadTrigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  // The first open must show the list at once - no loading placeholder.
+  const instantRows = document.querySelectorAll("[role=menuitemradio]").length;
+  if (instantRows !== 2) fail("the first open did not show models immediately, rows=" + instantRows);
+  if (document.querySelector(".dshk-status") !== null) fail("the first open still showed a loading placeholder");
+  await act(async () => { preloadRoot.unmount(); });
+  preloadHost.remove();
+
   console.log("model-seat-resilience ok: search box survives " + snapshots.length +
     " partial snapshots, an unresolved session, and the degraded face; a cold session shows a status row and recovers to " + warmRows + " models");
   process.exit(0);

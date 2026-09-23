@@ -817,6 +817,7 @@ window.__ModuleLoader__.load({
 		function createLazyDirectory(resolveDirectory) {
 			let directory = null;
 			let innerUnsubscribe = null;
+			let preloaded = false;
 			const listeners = new Set();
 			const notify = () => {
 				for (const listener of [...listeners]) {
@@ -848,7 +849,21 @@ window.__ModuleLoader__.load({
 				store: {
 					subscribe: (listener) => {
 						listeners.add(listener);
-						resolve();
+						const current = resolve();
+						/*
+						 * Warm the catalog as soon as the seat mounts. The composer mounts long before
+						 * anyone opens the menu, so preloading here is what lets the list appear at
+						 * once instead of after a Host round-trip on the first open.
+						 */
+						if (current !== null && !preloaded) {
+							preloaded = true;
+							try {
+								const started = current.load();
+								if (started !== void 0 && started !== null && typeof started.catch === "function") started.catch(() => {});
+							} catch (error) {
+								reportSeatFailure("directory.load", error);
+							}
+						}
 						return () => {
 							listeners.delete(listener);
 							if (listeners.size === 0 && innerUnsubscribe !== null) {
