@@ -62,6 +62,9 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
 - 目录在**席位挂载时就开始预热**（不是等打开菜单才取）：模型目录是跨会话共享的缓存，席位一挂载就 `load()`，等你点开菜单时通常已经 ready，列表**直接出现**而不必等一次 Host 往返。
 - 会话往往**在输入框挂载之后**才完成绑定，而这件事没有任何通知；因此预热带**有界自轮询**（每 250ms，最多约 10s），会话一就绪就立刻取列表，而不是拖到你点开菜单才取。
 - 预热**失败不会锁死**：`load()` 报错时重置标记并自行重试，否则一次瞬时故障会让触发器永远停在「加载中…」。
+- 重试预算用尽后不再谎报 loading，而是转为**错误行并写出真实原因**（如 `modelDirectories.directoryFor: … resolved no binding`），避免出现永不结束的转圈。
+- 加载中一行会附带**目录快照摘要**（`status=` / `groups=` / `failures=` / `current=` / `error=`）。这是区分两类故障的关键：`status=loading` 表示 Host 请求仍挂着，`status=idle` 表示请求回来了但投影没接上。
+- 诊断同时写入 `window.__dshHotkeySeat` 与 `localStorage["dsh.hotkeyToolkit.seatDiag"]`，因此**不需要开发者工具**也能取到（后者可直接从磁盘 leveldb 读）。
 - 降级时不会静默吞掉原因：最后一次失败会记录在 `window.__dshHotkeySeat`（含 `where` 与 `message`）。排查时在控制台执行 `window.__dshHotkeySeat` 即可看到是 `directoryFor` 还是 `subagentAddress` 出的问题。
 - 席位文案注册在 `hotkeyToolkit.seat` 命名空间；宿主的本地化**不跨命名空间回退**，因此该命名空间必须自带席位用到的全部键（缺失时会直接显示原始键名）。
 - 权限面板读取宿主的 `permissions` 会话投影（会话列表快照自带），切换走 `/permission` 斜杠命令，默认预设走 `permission` 设置命名空间——三者都是宿主原生通道，插件自身不存储任何权限状态。

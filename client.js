@@ -190,6 +190,7 @@ window.__ModuleLoader__.load({
 			".dshk-chevron{color:var(--dsw-alias-label-caption,#9aa0aa);flex:none;transition:transform .12s}",
 			".dshk-chevronOpen{transform:rotate(180deg)}",
 			".dshk-menu{z-index:1100;background:var(--dsw-specific-menu,#26282d);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent,0 10px 32px rgba(0,0,0,.35));color:var(--dsw-alias-label-primary,#e8eaee);border:0;border-radius:20px;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}",
+			".dshk-statusWhy{margin-top:4px;color:var(--dsw-alias-state-error-primary,#e05a5a);font-size:11px;line-height:16px;word-break:break-all}",
 			".dshk-status,.dshk-empty{color:var(--dsw-alias-label-tertiary,#9aa0aa);padding:10px;font-size:13px;line-height:20px}",
 			".dshk-error{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(224,80,80,.14));color:var(--dsw-alias-state-error-primary,#e05a5a);border-radius:8px;margin-bottom:4px;padding:7px 8px;font-size:12px;line-height:18px}",
 			".dshk-searchWrap{padding:2px 4px 6px;flex:none}",
@@ -795,14 +796,33 @@ window.__ModuleLoader__.load({
 		 * right for the UI, but it must not hide the cause from a bug report.
 		 */
 		const SEAT_DIAGNOSTICS = [];
-		const reportSeatFailure = (where, error) => {
+		const SEAT_DIAG_KEY = "dsh.hotkeyToolkit.seatDiag";
+		const recordSeatStep = (where, message) => {
 			try {
-				SEAT_DIAGNOSTICS.push({ where, message: String(error && error.message ? error.message : error) });
-				if (SEAT_DIAGNOSTICS.length > 20) SEAT_DIAGNOSTICS.shift();
+				SEAT_DIAGNOSTICS.push({ at: Date.now(), where, message });
+				if (SEAT_DIAGNOSTICS.length > 30) SEAT_DIAGNOSTICS.shift();
 				if (typeof window !== "undefined") window.__dshHotkeySeat = { failures: SEAT_DIAGNOSTICS };
+				window.localStorage.setItem(SEAT_DIAG_KEY, JSON.stringify(SEAT_DIAGNOSTICS));
 			} catch {
 				/* diagnostics must never break the seat */
 			}
+		};
+		const reportSeatFailure = (where, error) => recordSeatStep(where, String(error && error.message ? error.message : error));
+		/** Compact description of a directory snapshot, for diagnostics. */
+		const summarizeSeatSnapshot = (snap) => {
+			if (snap === null || snap === void 0) return "no-snapshot";
+			return [
+				"status=" + String(snap.status),
+				"groups=" + (Array.isArray(snap.groups) ? snap.groups.length : "non-array"),
+				"failures=" + (Array.isArray(snap.failures) ? snap.failures.length : "non-array"),
+				"current=" + (snap.current === null || snap.current === void 0 ? "null" : "set"),
+				"error=" + (snap.error === null || snap.error === void 0 ? "null" : String(snap.error)),
+			].join(" ");
+		};
+		/** One-line summary of the most recent failure, for the loading row. */
+		const lastSeatFailure = () => {
+			const last = SEAT_DIAGNOSTICS[SEAT_DIAGNOSTICS.length - 1];
+			return last === void 0 ? "" : last.where + ": " + last.message;
 		};
 		/*
 		 * Resolve the per-session directory on demand instead of up front.
@@ -821,6 +841,7 @@ window.__ModuleLoader__.load({
 			let warmPending = false;
 			let retryTimer = null;
 			let retryAttempts = 0;
+			let exhaustedSnapshot = null;
 			const listeners = new Set();
 			const notify = () => {
 				for (const listener of [...listeners]) {
@@ -839,6 +860,7 @@ window.__ModuleLoader__.load({
 				const current = directory;
 				if (current === null || preloaded) return;
 				preloaded = true;
+				recordSeatStep("warm", "start");
 				/*
 				 * A failed warm-up must not latch: leaving `preloaded` set would make this a
 				 * permanent one-shot, so a later open would never retry and the menu would sit
@@ -856,7 +878,25 @@ window.__ModuleLoader__.load({
 				};
 				try {
 					const started = current.load();
-					if (started !== void 0 && started !== null && typeof started.catch === "function") started.catch(giveUp);
+					if (started !== void 0 && started !== null && typeof started.then === "function") {
+						started.then(() => {
+							recordSeatStep("warm", "ok");
+							const snap = directory === null || directory.store === void 0 ? null : directory.store.getSnapshot();
+							recordSeatStep("store@load", summarizeSeatSnapshot(snap));
+							/*
+							 * The catalog may still be in flight when load() resolves, so look again
+							 * once more: a store that never leaves "loading" is the endless spinner,
+							 * and this is the line that says whether the request or the projection
+							 * behind it is what stalled.
+							 */
+							if (typeof setTimeout === "function") {
+								setTimeout(() => {
+									const later = directory === null || directory.store === void 0 ? null : directory.store.getSnapshot();
+									recordSeatStep("store@3s", summarizeSeatSnapshot(later));
+								}, 3000);
+							}
+						}, giveUp);
+					}
 				} catch (error) {
 					giveUp(error);
 				}
@@ -881,6 +921,20 @@ window.__ModuleLoader__.load({
 					if (preloaded || retryAttempts >= 40) {
 						clearInterval(retryTimer);
 						retryTimer = null;
+						/*
+						 * Budget spent and the session never resolved: say so instead of leaving the
+						 * menu on a loading row that never ends.
+						 */
+						if (!preloaded && directory === null) {
+							/*
+							 * Freeze the reason once: getSnapshot must return a cached value or React
+							 * treats every render as a change and loops until it crashes the seat.
+							 */
+							const why = lastSeatFailure() || "session never resolved";
+							recordSeatStep("give-up", why);
+							exhaustedSnapshot = Object.freeze({ current: null, status: "error", error: why, groups: [], failures: [] });
+							notify();
+						}
 					}
 				}, 250);
 			};
@@ -902,6 +956,7 @@ window.__ModuleLoader__.load({
 				}
 				if (next === null || next === void 0) return null;
 				directory = next;
+				recordSeatStep("resolved", "ok");
 				if (next.store !== void 0 && next.store !== null && typeof next.store.subscribe === "function") {
 					innerUnsubscribe = next.store.subscribe(notify);
 				}
@@ -940,7 +995,7 @@ window.__ModuleLoader__.load({
 						if (current !== null && current.store !== void 0 && current.store !== null && typeof current.store.getSnapshot === "function") {
 							return current.store.getSnapshot();
 						}
-						return LOADING_SEAT_SNAPSHOT;
+						return exhaustedSnapshot === null ? LOADING_SEAT_SNAPSHOT : exhaustedSnapshot;
 					},
 				},
 				load: () => {
@@ -1223,7 +1278,16 @@ window.__ModuleLoader__.load({
 				React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
 				React.createElement(ChevronRight, { key: "c" }),
 			]));
-			if (state.status === "loading") modelPane.push(React.createElement("div", { className: "dshk-status", key: "loading" }, t("status.loading")));
+			if (state.status === "loading") modelPane.push(React.createElement("div", { className: "dshk-status", key: "loading" }, [
+				React.createElement("div", { key: "text" }, t("status.loading")),
+				/*
+				 * Surface what the directory actually reports. The composer seat is the one
+				 * place a user can read, and a loading row with no reason is exactly the
+				 * report this exists to prevent: a pending catalog (status=loading) and a
+				 * missing projection (status=idle) are different bugs.
+				 */
+				React.createElement("div", { key: "why", className: "dshk-statusWhy" }, summarizeSeatSnapshot(state)),
+			]));
 			if (failure !== null) modelPane.push(React.createElement("div", { className: "dshk-error", key: "failure" }, failure));
 			for (const entry of state.failures) modelPane.push(React.createElement("div", { className: "dshk-error", key: "fail:" + entry.id }, t("warning.groupLoad", { name: entry.name, message: entry.message })));
 			modelPane.push(React.createElement("div", { className: "dshk-groups", key: "groups" }, filtered.map((entry) => {
