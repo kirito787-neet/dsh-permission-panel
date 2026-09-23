@@ -65,6 +65,7 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
 - 重试预算用尽后不再谎报 loading，而是转为**错误行并写出真实原因**（如 `modelDirectories.directoryFor: … resolved no binding`），避免出现永不结束的转圈。
 - 加载中一行会附带**目录快照摘要**（`status=` / `groups=` / `failures=` / `current=` / `error=`）。这是区分两类故障的关键：`status=loading` 表示 Host 请求仍挂着，`status=idle` 表示请求回来了但投影没接上。
 - 诊断同时写入 `window.__dshHotkeySeat` 与 `localStorage["dsh.hotkeyToolkit.seatDiag"]`，因此**不需要开发者工具**也能取到（后者可直接从磁盘 leveldb 读）。
+- 插件必须注入 `remote` 与 `remote.session`（以及 `sessions`），**即使自己从不调用它们**。`modelDirectories` 是 cordis 的 `Service`，其 tracker 会把 `this.ctx` 重绑成**调用方的 ctx**，于是 `directoryFor()` 内部的 `this.ctx.remote.session` 是通过**本插件**的 fiber 解析的。只声明自己直接调用的服务会导致每次 `directoryFor()` 都抛 `cannot get property "remote.session" without inject`，表现就是模型列表永远停在加载中。
 - 降级时不会静默吞掉原因：最后一次失败会记录在 `window.__dshHotkeySeat`（含 `where` 与 `message`）。排查时在控制台执行 `window.__dshHotkeySeat` 即可看到是 `directoryFor` 还是 `subagentAddress` 出的问题。
 - 席位文案注册在 `hotkeyToolkit.seat` 命名空间；宿主的本地化**不跨命名空间回退**，因此该命名空间必须自带席位用到的全部键（缺失时会直接显示原始键名）。
 - 权限面板读取宿主的 `permissions` 会话投影（会话列表快照自带），切换走 `/permission` 斜杠命令，默认预设走 `permission` 设置命名空间——三者都是宿主原生通道，插件自身不存储任何权限状态。

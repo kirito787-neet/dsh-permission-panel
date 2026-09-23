@@ -1451,8 +1451,17 @@ window.__ModuleLoader__.load({
 			"warning.groupLoad": "{name} failed to load: {message}",
 		};
 
-		/** Required services: the console registry, locale, and the seat's own faces. */
-		const inject = ["slots", "locale"];
+		/**
+		 * Required services.
+		 *
+		 * `remote` and `remote.session` are load-bearing even though this plugin never
+		 * calls them: `modelDirectories` is a cordis Service whose tracker rebinds
+		 * `this.ctx` to the CALLING context, so `directoryFor()` resolves
+		 * `this.ctx.remote.session` through THIS fiber. Omitting them makes every
+		 * call throw `cannot get property "remote.session" without inject`, which
+		 * surfaces as a model list that never leaves its loading row.
+		 */
+		const inject = ["locale", "remote", "remote.session", "sessions", "slots"];
 
 		/**
 		 * Set while the settings page is capturing a new combination, so the global

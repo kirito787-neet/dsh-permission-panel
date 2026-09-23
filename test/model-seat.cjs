@@ -296,6 +296,30 @@ const leftovers = collect(tree, (entry) => typeof entry.children?.[0] === "strin
   .filter((value) => /^(search|menu|trigger|empty|status|effort|warning)\./.test(value));
 if (leftovers.length > 0) fail("case 9: untranslated keys rendered: " + JSON.stringify(leftovers));
 
+// ---- case 10: the plugin injects every service the model seat reaches ----
+// `modelDirectories` is a cordis Service whose tracker rebinds `this.ctx` to the
+// CALLING context, so directoryFor() resolves `this.ctx.remote.session` through
+// THIS plugin's fiber. Declaring only the services we call directly makes every
+// directoryFor() throw "cannot get property \"remote.session\" without inject",
+// which reaches the user as a model list stuck on its loading row. The stub
+// harness cannot see this, so assert the declared list explicitly.
+const declaredInject = plugin.inject;
+if (!Array.isArray(declaredInject)) fail("case 10: the plugin exports no inject array");
+for (const required of ["locale", "remote", "remote.session", "sessions", "slots"]) {
+  if (!declaredInject.includes(required)) {
+    fail("case 10: the plugin does not inject \"" + required + "\", so the model seat cannot resolve its directory");
+  }
+}
+
+// The manifest's package-level inject list must cover the same providers.
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+const manifestInject = manifest.dsh?.client?.inject ?? [];
+for (const provider of ["@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-api-session-controller"]) {
+  if (!manifestInject.includes(provider)) {
+    fail("case 10: package.json dsh.client.inject omits " + provider);
+  }
+}
+
 console.log(
   "model-seat ok: search box above " + options.length + " model options" +
   ", filter/enter/escape verified" +
