@@ -780,6 +780,17 @@ window.__ModuleLoader__.load({
 			return false;
 		}
 
+		/*
+		 * Read-only stand-in for the per-session directory while the session is not
+		 * resolvable yet. Both members are stable by construction: React re-reads
+		 * getSnapshot on every render and only bails out when the value is cached, so a
+		 * fresh object literal here would itself crash the seat it exists to protect.
+		 */
+		const IDLE_SEAT_SNAPSHOT = Object.freeze({ current: null, status: "idle", error: null, groups: [], failures: [] });
+		const IDLE_DIRECTORY = Object.freeze({
+			subscribe: () => () => {},
+			getSnapshot: () => IDLE_SEAT_SNAPSHOT,
+		});
 		/**
 		 * The composer's model seat: the official two-level Model/Effort menu with a
 		 * model search field on top of the provider-grouped list.
@@ -792,7 +803,24 @@ window.__ModuleLoader__.load({
 		 */
 		function ModelSelect(props) {
 			const { locked, available, directory, load, select, t } = props;
-			const state = React.useSyncExternalStore((fn) => directory.subscribe(fn), () => directory.getSnapshot());
+			const rawState = React.useSyncExternalStore((fn) => directory.subscribe(fn), () => directory.getSnapshot());
+			/*
+			 * A render crash RETIRES this seat: the slot runtime abdicates a shadowing
+			 * entry on the first render error, which hands the composer back to the
+			 * shipped two-level menu and silently drops the search box. Normalize every
+			 * field the render reads so a partial store snapshot degrades instead of
+			 * throwing.
+			 */
+			const state = React.useMemo(() => {
+				if (rawState !== null && rawState !== void 0 && Array.isArray(rawState.groups) && Array.isArray(rawState.failures)) return rawState;
+				return {
+					current: rawState?.current ?? null,
+					status: rawState?.status ?? "idle",
+					error: rawState?.error ?? null,
+					groups: Array.isArray(rawState?.groups) ? rawState.groups : [],
+					failures: Array.isArray(rawState?.failures) ? rawState.failures : [],
+				};
+			}, [rawState]);
 			const [open, setOpen] = React.useState(false);
 			const [pane, setPane] = React.useState("model");
 			const [query, setQuery] = React.useState("");
@@ -816,7 +844,8 @@ window.__ModuleLoader__.load({
 			}))), [state.groups]);
 			const currentIndex = state.current === null ? -1 : choices.findIndex((c) => c.selection.provider === state.current.provider && c.selection.model === state.current.model);
 			const currentChoice = choices[currentIndex];
-			const reasoning = currentChoice?.model.reasoning;
+			const rawReasoning = currentChoice?.model.reasoning;
+			const reasoning = rawReasoning === void 0 || rawReasoning === null ? void 0 : (Array.isArray(rawReasoning.efforts) ? rawReasoning : { ...rawReasoning, efforts: [] });
 			const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort;
 			const effortLabel = reasoning === void 0 ? void 0 : effectiveEffort === void 0 ? t("effort.providerDefault") : (reasoning.efforts.find((level) => level.id === effectiveEffort)?.name ?? effectiveEffort);
 			const effortChoices = React.useMemo(() => reasoning === void 0 ? [] : [
@@ -1711,8 +1740,22 @@ window.__ModuleLoader__.load({
 					priority: -1,
 					locale: SEAT_NS,
 					inject: (sessionId) => {
-						const directory = models.directoryFor(sessionId);
-						const available = sessions.subagentAddress(sessionId) === void 0;
+						/*
+						 * directoryFor throws for a session whose scope/binding is not resolved
+						 * yet (cold boot, session restore). Letting that escape would crash the
+						 * entry and abdicate the seat, so degrade to a read-only face instead.
+						 */
+						let directory;
+						let available = false;
+						try {
+							directory = models.directoryFor(sessionId);
+							available = sessions.subagentAddress(sessionId) === void 0;
+						} catch {
+							directory = void 0;
+						}
+						if (directory === void 0) {
+							return { available: false, directory: IDLE_DIRECTORY, load: () => {}, select: () => Promise.resolve(false) };
+						}
 						return {
 							available,
 							directory: directory.store,

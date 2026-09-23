@@ -33,6 +33,6 @@
   },
   "scripts": {
     "test": "node test/model-seat.cjs && node test/smoke.cjs",
-    "test:dom": "node test/model-seat-dom.cjs"
+    "test:dom": "node test/model-seat-dom.cjs && node test/model-seat-resilience.cjs"
   }
 }

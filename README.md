@@ -40,12 +40,13 @@ DSH 快捷键工具包 + 输入框模型搜索 + 工作区权限面板。
 
 ```bash
 npm test          # 无依赖：模型席位（含一级菜单搜索框）+ 权限面板
-npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
+npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位（含抗崩退回归）
 ```
 
 - `test/model-seat.cjs`：以桩化 react 加载真实 `client.js`，断言菜单**一级**即含搜索框、搜索框在模型选项**上方**、过滤 / Enter 选中 / Esc 清空与关闭、思考强度入口可达，并校验席位词典 zh/en 键一致、无未翻译键泄漏。其词典桩严格复刻宿主的解析规则（**仅在本命名空间查找，不跨命名空间回退**），因此把字符串放错命名空间会直接以原始键暴露。
 - `test/smoke.cjs`：权限面板渲染 + 下拉 Portal + 点击切换 + 默认权限写入。
-- `test/model-seat-dom.cjs`（可选）：用真实 React 18 + jsdom 渲染并驱动席位，验证搜索框位于菜单首位、占位符为真实译文、过滤收敛、Enter 选中。需指定依赖目录：
+- `test/model-seat-dom.cjs`（可选）：用真实 React 18 + jsdom 渲染并驱动席位，验证搜索框位于菜单首位、占位符为真实译文、过滤收敛、Enter 选中。
+- `test/model-seat-resilience.cjs`（可选）：抗崩退回归。席位是「遮蔽官方」的单选席位，**首次渲染出错就会被席位运行时退役（abdicate）**，此后整段会话都退回官方两级菜单、搜索框消失。该套件用残缺快照（缺 `groups`/`failures`、空对象、`reasoning` 无 `efforts`）与「会话未解析导致 `directoryFor` 抛错」两类冷启动输入，断言搜索框依然渲染、注册不被中断。两个 DOM 套件都需指定依赖目录：
   ```bash
   DSH_DOMTEST_DIR=<含 react/react-dom/jsdom 的目录> npm run test:dom
   ```
@@ -54,5 +55,6 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
 
 - 模式切换会先写入 `dsh-desktop` 设置（切换到非兼容模式时同时关闭浏览器访问与局域网暴露），再重启 DSH Desktop 生效。
 - 模型搜索通过以更低优先级遮蔽官方 `conversation.input.model` 席位实现；若本插件被卸载或出错，官方模型选择会自动恢复。
+- 正因如此，席位**不能抛错**：席位运行时对遮蔽型席位采用「一崩即退役」策略，首次渲染异常就会让本席位永久退场（直到重载），表现就是搜索框消失、官方两级菜单回归。因此席位对宿主快照做了防御性归一（`groups`/`failures` 非数组即降级为空），`directoryFor` 抛错时降级为只读空列表，而不是把异常抛给渲染器。
 - 席位文案注册在 `hotkeyToolkit.seat` 命名空间；宿主的本地化**不跨命名空间回退**，因此该命名空间必须自带席位用到的全部键（缺失时会直接显示原始键名）。
 - 权限面板读取宿主的 `permissions` 会话投影（会话列表快照自带），切换走 `/permission` 斜杠命令，默认预设走 `permission` 设置命名空间——三者都是宿主原生通道，插件自身不存储任何权限状态。
