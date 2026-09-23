@@ -818,6 +818,9 @@ window.__ModuleLoader__.load({
 			let directory = null;
 			let innerUnsubscribe = null;
 			let preloaded = false;
+			let warmPending = false;
+			let retryTimer = null;
+			let retryAttempts = 0;
 			const listeners = new Set();
 			const notify = () => {
 				for (const listener of [...listeners]) {
@@ -828,6 +831,59 @@ window.__ModuleLoader__.load({
 					}
 				}
 			};
+			/*
+			 * Fetch the catalog once a directory exists. Safe to call repeatedly:
+			 * `preloaded` makes it a one-shot per directory.
+			 */
+			const warm = () => {
+				const current = directory;
+				if (current === null || preloaded) return;
+				preloaded = true;
+				/*
+				 * A failed warm-up must not latch: leaving `preloaded` set would make this a
+				 * permanent one-shot, so a later open would never retry and the menu would sit
+				 * on its loading row forever.
+				 */
+				const giveUp = (error) => {
+					preloaded = false;
+					reportSeatFailure("directory.load", error);
+					/*
+					 * Retry on our own rather than waiting for React to resubscribe: a
+					 * transient failure would otherwise leave the trigger on its loading label
+					 * until the user opened the menu and paid the round-trip.
+					 */
+					scheduleRetry();
+				};
+				try {
+					const started = current.load();
+					if (started !== void 0 && started !== null && typeof started.catch === "function") started.catch(giveUp);
+				} catch (error) {
+					giveUp(error);
+				}
+			};
+			/*
+			 * A session binds some time AFTER the composer mounts and nothing notifies the
+			 * seat, so poll briefly until the directory resolves. Without this the catalog
+			 * is only fetched when the user opens the menu - the round-trip they would
+			 * otherwise wait through. Bounded: gives up after ~10s and is cleared on success.
+			 */
+			const scheduleRetry = () => {
+				if (retryTimer !== null) return;
+				if (typeof setInterval !== "function") return;
+				retryTimer = setInterval(() => {
+					retryAttempts += 1;
+					resolve();
+					warm();
+					/*
+					 * Stop once the catalog is actually in flight/settled. `preloaded` is true
+					 * exactly while a load is outstanding or succeeded.
+					 */
+					if (preloaded || retryAttempts >= 40) {
+						clearInterval(retryTimer);
+						retryTimer = null;
+					}
+				}, 250);
+			};
 			const resolve = () => {
 				if (directory !== null) return directory;
 				let next;
@@ -835,6 +891,13 @@ window.__ModuleLoader__.load({
 					next = resolveDirectory();
 				} catch (error) {
 					reportSeatFailure("modelDirectories.directoryFor", error);
+					/*
+					 * The session is not bound yet. Remember that a warm-up is still owed so
+					 * a later nudge (retryWarmUp) can perform it - otherwise the very first
+					 * open pays the full Host round-trip.
+					 */
+					warmPending = !preloaded;
+					scheduleRetry();
 					return null;
 				}
 				if (next === null || next === void 0) return null;
@@ -843,27 +906,23 @@ window.__ModuleLoader__.load({
 					innerUnsubscribe = next.store.subscribe(notify);
 				}
 				notify();
+				if (warmPending) {
+					warmPending = false;
+					warm();
+				}
 				return directory;
 			};
 			return {
 				store: {
 					subscribe: (listener) => {
 						listeners.add(listener);
-						const current = resolve();
 						/*
 						 * Warm the catalog as soon as the seat mounts. The composer mounts long before
 						 * anyone opens the menu, so preloading here is what lets the list appear at
 						 * once instead of after a Host round-trip on the first open.
 						 */
-						if (current !== null && !preloaded) {
-							preloaded = true;
-							try {
-								const started = current.load();
-								if (started !== void 0 && started !== null && typeof started.catch === "function") started.catch(() => {});
-							} catch (error) {
-								reportSeatFailure("directory.load", error);
-							}
-						}
+						resolve();
+						warm();
 						return () => {
 							listeners.delete(listener);
 							if (listeners.size === 0 && innerUnsubscribe !== null) {
@@ -898,6 +957,14 @@ window.__ModuleLoader__.load({
 					const current = resolve();
 					if (current === null || typeof current.select !== "function") return Promise.resolve(false);
 					return current.select(selection).then(() => true, () => false);
+				},
+				/*
+				 * Called when the session may have become resolvable (the sessions list
+				 * changed). Retries a warm-up that the cold start had to skip.
+				 */
+				retryWarmUp: () => {
+					resolve();
+					warm();
 				},
 			};
 		}

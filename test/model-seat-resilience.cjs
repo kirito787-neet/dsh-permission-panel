@@ -362,6 +362,106 @@ const fail = (message) => {
   await act(async () => { preloadRoot.unmount(); });
   preloadHost.remove();
 
+  // A session binds AFTER the composer mounts, and nothing notifies the seat. The
+  // warm-up must therefore retry on its own, otherwise the catalog is only fetched
+  // when the user opens the menu - the round-trip they end up waiting through.
+  let lateBound = false;
+  let lateLoads = 0;
+  let lateSnapshot = { current: null, status: "idle", error: null, groups: [], failures: [] };
+  const lateListeners = new Set();
+  const lateStore = {
+    subscribe: (listener) => { lateListeners.add(listener); return () => lateListeners.delete(listener); },
+    getSnapshot: () => lateSnapshot,
+    emit: (next) => { lateSnapshot = next; for (const listener of [...lateListeners]) listener(); },
+  };
+  directoryForImpl = () => {
+    if (!lateBound) throw new Error("session resolved no binding");
+    return {
+      store: lateStore,
+      load: () => { lateLoads += 1; lateStore.emit(readySnapshot); return Promise.resolve(readySnapshot); },
+      select: () => Promise.resolve(true),
+    };
+  };
+  let lateFace = null;
+  const lateScope = {
+    ...scope,
+    slots: { inject: (name, factory) => factory(), register: (options) => { if (options.inject) lateFace = options.inject("session-late"); return () => {}; } },
+  };
+  plugin.apply(makeCtx(lateScope));
+  const lateHost = document.createElement("div");
+  document.body.appendChild(lateHost);
+  const lateRoot = ReactDOMClient.createRoot(lateHost);
+  const LateSeat = () => React.createElement(ModelSeat, {
+    locked: false, available: lateFace.available, directory: lateFace.directory,
+    load: lateFace.load, select: lateFace.select, t,
+  });
+  await act(async () => { lateRoot.render(React.createElement(LateSeat)); });
+  if (lateLoads !== 0) fail("nothing should load while the session is unbound");
+  // The session binds with no user interaction at all.
+  lateBound = true;
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 900)); });
+  if (lateLoads === 0) fail("the warm-up never retried after the session bound");
+  const lateTrigger = lateHost.querySelector(".dshk-trigger");
+  const lateLabel = lateTrigger === null ? "" : lateTrigger.textContent.trim();
+  if (lateLabel === "" || lateLabel === dict["trigger.loading"]) {
+    fail("the trigger still shows the loading label after the session bound: " + JSON.stringify(lateLabel));
+  }
+  await act(async () => { lateRoot.unmount(); });
+  lateHost.remove();
+
+  // A FAILED warm-up must not latch: opening the menu has to retry it.
+  let flakyLoads = 0;
+  let flakySnapshot = { current: null, status: "idle", error: null, groups: [], failures: [] };
+  const flakyListeners = new Set();
+  const flakyStore = {
+    subscribe: (listener) => { flakyListeners.add(listener); return () => flakyListeners.delete(listener); },
+    getSnapshot: () => flakySnapshot,
+    emit: (next) => { flakySnapshot = next; for (const listener of [...flakyListeners]) listener(); },
+  };
+  directoryForImpl = () => ({
+    store: flakyStore,
+    load: () => {
+      flakyLoads += 1;
+      if (flakyLoads === 1) return Promise.reject(new Error("transient host error"));
+      flakyStore.emit(readySnapshot);
+      return Promise.resolve(readySnapshot);
+    },
+    select: () => Promise.resolve(true),
+  });
+  let flakyFace = null;
+  const flakyScope = {
+    ...scope,
+    slots: { inject: (name, factory) => factory(), register: (options) => { if (options.inject) flakyFace = options.inject("session-flaky"); return () => {}; } },
+  };
+  plugin.apply(makeCtx(flakyScope));
+  const flakyHost = document.createElement("div");
+  document.body.appendChild(flakyHost);
+  const flakyRoot = ReactDOMClient.createRoot(flakyHost);
+  const FlakySeat = () => React.createElement(ModelSeat, {
+    locked: false, available: flakyFace.available, directory: flakyFace.directory,
+    load: flakyFace.load, select: flakyFace.select, t,
+  });
+  await act(async () => { flakyRoot.render(React.createElement(FlakySeat)); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+  const flakyTrigger = flakyHost.querySelector(".dshk-trigger");
+  if (flakyTrigger === null) fail("the model button is missing in the flaky case");
+  // The transient failure must be retried WITHOUT the user opening the menu - the
+  // menu is not opened in this block on purpose. A latched warm-up leaves the
+  // trigger stuck on its loading label forever.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 800)); });
+  const flakyLabel = flakyHost.querySelector(".dshk-trigger").textContent.trim();
+  if (flakyLabel === dict["trigger.loading"]) {
+    fail("a failed warm-up latched; the trigger is still loading after " + flakyLoads + " load(s)");
+  }
+  if (flakyLoads < 2) fail("the failed warm-up was not retried; load() ran only " + flakyLoads + " time(s)");
+  // And the menu must then show the models at once.
+  await act(async () => { flakyHost.querySelector(".dshk-trigger").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+  const flakyRows = document.querySelectorAll("[role=menuitemradio]").length;
+  if (flakyRows !== 2) fail("the retried warm-up did not surface the models, rows=" + flakyRows);
+  await act(async () => { flakyRoot.unmount(); });
+  flakyHost.remove();
+
   console.log("model-seat-resilience ok: search box survives " + snapshots.length +
     " partial snapshots, an unresolved session, and the degraded face; a cold session shows a status row and recovers to " + warmRows + " models");
   process.exit(0);
