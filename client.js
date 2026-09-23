@@ -794,7 +794,7 @@ window.__ModuleLoader__.load({
 			const { locked, available, directory, load, select, t } = props;
 			const state = React.useSyncExternalStore((fn) => directory.subscribe(fn), () => directory.getSnapshot());
 			const [open, setOpen] = React.useState(false);
-			const [pane, setPane] = React.useState("root");
+			const [pane, setPane] = React.useState("model");
 			const [query, setQuery] = React.useState("");
 			const [menuPos, setMenuPos] = React.useState(null);
 			const [failure, setFailure] = React.useState(null);
@@ -893,7 +893,7 @@ window.__ModuleLoader__.load({
 			};
 			const close = (restoreFocus = false) => {
 				setOpen(false);
-				setPane("root");
+				setPane("model");
 				setQuery("");
 				if (restoreFocus) queueMicrotask(() => {
 					triggerRef.current?.focus();
@@ -908,9 +908,10 @@ window.__ModuleLoader__.load({
 			const onRootKeyDown = (event) => {
 				if (event.key === "Escape" && open) {
 					event.preventDefault();
-					if (pane !== "root") {
-						setPane("root");
+					if (query !== "") {
 						setQuery("");
+					} else if (pane === "effort") {
+						setPane("model");
 					} else close(true);
 					return;
 				}
@@ -970,18 +971,6 @@ window.__ModuleLoader__.load({
 			};
 
 			const modelPane = [];
-			if (reasoning !== void 0) modelPane.push(React.createElement("button", {
-				ref: itemRef(),
-				type: "button",
-				role: "menuitem",
-				className: "dshk-cell",
-				key: "effort",
-				onClick: () => setPane("effort"),
-			}, [
-				React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.effort")),
-				React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
-				React.createElement(ChevronRight, { key: "c" }),
-			]));
 			const searchField = React.createElement("div", { className: "dshk-searchWrap", key: "search" }, React.createElement("div", { className: "dshk-search" }, [
 				React.createElement(SearchIcon, { key: "icon" }),
 				React.createElement("input", {
@@ -1016,6 +1005,18 @@ window.__ModuleLoader__.load({
 				}, React.createElement(ClearIcon, {})),
 			]));
 			modelPane.push(searchField);
+			if (reasoning !== void 0) modelPane.push(React.createElement("button", {
+				ref: itemRef(),
+				type: "button",
+				role: "menuitem",
+				className: "dshk-cell",
+				key: "effort",
+				onClick: () => setPane("effort"),
+			}, [
+				React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.effort")),
+				React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
+				React.createElement(ChevronRight, { key: "c" }),
+			]));
 			if (state.status === "loading") modelPane.push(React.createElement("div", { className: "dshk-status", key: "loading" }, t("status.loading")));
 			if (failure !== null) modelPane.push(React.createElement("div", { className: "dshk-error", key: "failure" }, failure));
 			for (const entry of state.failures) modelPane.push(React.createElement("div", { className: "dshk-error", key: "fail:" + entry.id }, t("warning.groupLoad", { name: entry.name, message: entry.message })));
@@ -1052,34 +1053,18 @@ window.__ModuleLoader__.load({
 			if (needle === "" && state.status === "ready" && choices.length === 0) modelPane.push(React.createElement("div", { className: "dshk-empty", key: "empty" }, t("empty.models")));
 
 			const panes = [];
-			if (pane === "root") {
+			if (pane === "effort") {
 				panes.push(React.createElement("button", {
 					ref: itemRef(),
 					type: "button",
 					role: "menuitem",
 					className: "dshk-cell",
-					key: "model",
+					key: "back",
 					onClick: () => setPane("model"),
 				}, [
-					React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.model")),
-					React.createElement("span", { className: "dshk-cellValue", key: "v" }, modelLabel),
-					React.createElement(ChevronRight, { key: "c" }),
+					React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.back")),
+					React.createElement("span", { className: "dshk-cellValue", key: "v" }, t("menu.effort")),
 				]));
-				if (reasoning !== void 0) panes.push(React.createElement("button", {
-					ref: itemRef(),
-					type: "button",
-					role: "menuitem",
-					className: "dshk-cell",
-					key: "effort",
-					onClick: () => setPane("effort"),
-				}, [
-					React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.effort")),
-					React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
-					React.createElement(ChevronRight, { key: "c" }),
-				]));
-			} else if (pane === "model") {
-				panes.push(...modelPane);
-			} else {
 				if (failure !== null) panes.push(React.createElement("div", { className: "dshk-error", key: "failure" }, failure));
 				if (effortChoices.length === 0) {
 					panes.push(React.createElement("div", { className: "dshk-empty", key: "empty" }, t("empty.efforts")));
@@ -1100,6 +1085,8 @@ window.__ModuleLoader__.load({
 						React.createElement("span", { className: "dshk-check", key: "check" }, effectiveEffort === level.effort ? React.createElement(CheckIcon, {}) : null),
 					]));
 				}
+			} else {
+				panes.push(...modelPane);
 			}
 
 			return React.createElement("div", {
@@ -1152,6 +1139,10 @@ window.__ModuleLoader__.load({
 			"menu.aria": "模型选择",
 			"menu.model": "模型",
 			"menu.effort": "思考强度",
+			"menu.back": "返回",
+			"searchPlaceholder": "搜索模型…",
+			"searchEmpty": "没有匹配的模型",
+			"searchClear": "清除搜索",
 			"effort.providerDefault": "供应商默认",
 			"status.loading": "正在加载模型列表…",
 			"empty.models": "没有可用的模型",
@@ -1168,6 +1159,10 @@ window.__ModuleLoader__.load({
 			"menu.aria": "Model selection",
 			"menu.model": "Model",
 			"menu.effort": "Effort",
+			"menu.back": "Back",
+			"searchPlaceholder": "Search models…",
+			"searchEmpty": "No matching model",
+			"searchClear": "Clear search",
 			"effort.providerDefault": "Provider default",
 			"status.loading": "Loading models…",
 			"empty.models": "No model available",
