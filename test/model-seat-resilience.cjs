@@ -242,7 +242,79 @@ const fail = (message) => {
     }
   }
 
+
+  // The lazy directory must RECOVER: a session that is unresolvable at first
+  // (cold boot) and binds later has to start showing models once it does. The
+  // injected face is computed once per binding, so resolving eagerly would pin an
+  // empty directory for the whole session - the menu would open with no rows.
+  subagentImpl = () => undefined;
+  let bindingReady = false;
+  let realStore = null;
+  const readySnapshot = {
+    current: { provider: "prov-a", model: "alpha-1" },
+    status: "ready",
+    error: null,
+    groups: [{ id: "prov-a", name: "Provider A", models: [{ id: "alpha-1", name: "Alpha One" }, { id: "beta-2", name: "Beta Two" }] }],
+    failures: [],
+  };
+  directoryForImpl = () => {
+    if (!bindingReady) throw new Error("session resolved no binding");
+    if (realStore === null) {
+      let snapshot = { current: null, status: "idle", error: null, groups: [], failures: [] };
+      const listeners = new Set();
+      realStore = {
+        subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+        getSnapshot: () => snapshot,
+        emit: (next) => { snapshot = next; for (const listener of [...listeners]) listener(); },
+      };
+    }
+    return {
+      store: realStore,
+      load: () => { realStore.emit(readySnapshot); },
+      select: () => Promise.resolve(true),
+    };
+  };
+
+  let lazyFace = null;
+  const lazyScope = {
+    ...scope,
+    slots: { inject: (name, factory) => factory(), register: (options) => { if (options.inject) lazyFace = options.inject("session-cold"); return () => {}; } },
+  };
+  plugin.apply(makeCtx(lazyScope));
+  if (lazyFace === null) fail("the seat registration aborted for a cold session");
+  // Building the face must NOT resolve the directory (that is what used to throw).
+  const before = lazyFace.directory.getSnapshot();
+  if (before.status !== "loading") fail("an unresolved session must report loading, saw " + JSON.stringify(before.status));
+  if (before.groups.length !== 0) fail("an unresolved session must not invent models");
+
+  // Mount it, open the menu, then let the session bind and load.
+  const coldHost = document.createElement("div");
+  document.body.appendChild(coldHost);
+  const coldRoot = ReactDOMClient.createRoot(coldHost);
+  const ColdSeat = () => React.createElement(ModelSeat, {
+    locked: false, available: lazyFace.available, directory: lazyFace.directory,
+    load: lazyFace.load, select: lazyFace.select, t,
+  });
+  await act(async () => { coldRoot.render(React.createElement(ColdSeat)); });
+  const coldTrigger = coldHost.querySelector(".dshk-trigger");
+  if (coldTrigger === null) fail("the model button is missing for a cold session");
+  await act(async () => { coldTrigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  if (document.querySelector(".dshk-searchInput") === null) fail("the search box is missing for a cold session");
+  // A bare search box over nothing is the bug: there must be a visible status row.
+  const coldRows = document.querySelectorAll("[role=menuitemradio]").length;
+  const coldStatus = document.querySelector(".dshk-status, .dshk-empty, .dshk-error");
+  if (coldRows === 0 && coldStatus === null) fail("a cold session opened an empty menu with no status row");
+
+  // The session binds; the same face must now surface the real models.
+  bindingReady = true;
+  await act(async () => { lazyFace.load(); });
+  const warmRows = document.querySelectorAll("[role=menuitemradio]").length;
+  if (warmRows !== 2) fail("models did not appear after the session bound, rows=" + warmRows);
+  if (document.querySelector(".dshk-searchInput") === null) fail("the search box vanished after the session bound");
+  await act(async () => { coldRoot.unmount(); });
+  coldHost.remove();
+
   console.log("model-seat-resilience ok: search box survives " + snapshots.length +
-    " partial snapshots, an unresolved session, and the degraded face (no abdication)");
+    " partial snapshots, an unresolved session, and the degraded face; a cold session shows a status row and recovers to " + warmRows + " models");
   process.exit(0);
 })().catch((error) => fail(error && error.message ? error.message : String(error)));

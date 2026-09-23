@@ -781,12 +781,14 @@ window.__ModuleLoader__.load({
 		}
 
 		/*
-		 * Read-only stand-in for the per-session directory while the session is not
-		 * resolvable yet. Both members are stable by construction: React re-reads
-		 * getSnapshot on every render and only bails out when the value is cached, so a
-		 * fresh object literal here would itself crash the seat it exists to protect.
+		 * What the seat reads before its per-session directory is resolvable. The status
+		 * is "loading" on purpose: the menu only paints a row for "loading"/"ready" and
+		 * an "idle" status would render the search box above an empty menu.
+		 *
+		 * Frozen and shared: React re-reads getSnapshot every render and only bails out
+		 * when the value is cached, so a fresh object literal would crash the seat.
 		 */
-		const IDLE_SEAT_SNAPSHOT = Object.freeze({ current: null, status: "idle", error: null, groups: [], failures: [] });
+		const LOADING_SEAT_SNAPSHOT = Object.freeze({ current: null, status: "loading", error: null, groups: [], failures: [] });
 		/*
 		 * Last failures seen while building the seat face, parked on a global so a
 		 * user can read them back with `window.__dshHotkeySeat`. Degrading quietly is
@@ -802,10 +804,88 @@ window.__ModuleLoader__.load({
 				/* diagnostics must never break the seat */
 			}
 		};
-		const IDLE_DIRECTORY = Object.freeze({
-			subscribe: () => () => {},
-			getSnapshot: () => IDLE_SEAT_SNAPSHOT,
-		});
+		/*
+		 * Resolve the per-session directory on demand instead of up front.
+		 *
+		 * `modelDirectories.directoryFor()` throws while a session's scope/binding is
+		 * still unresolved (cold boot, session restore), and an injected face is computed
+		 * ONCE per binding — so resolving eagerly pins an empty directory for the rest of
+		 * the session and the menu opens with no rows. This proxy resolves on first
+		 * subscription (and again on every open, via load()), reports a loading snapshot
+		 * until it can, then notifies React so the real store takes over.
+		 */
+		function createLazyDirectory(resolveDirectory) {
+			let directory = null;
+			let innerUnsubscribe = null;
+			const listeners = new Set();
+			const notify = () => {
+				for (const listener of [...listeners]) {
+					try {
+						listener();
+					} catch {
+						/* a broken listener is not the seat's problem */
+					}
+				}
+			};
+			const resolve = () => {
+				if (directory !== null) return directory;
+				let next;
+				try {
+					next = resolveDirectory();
+				} catch (error) {
+					reportSeatFailure("modelDirectories.directoryFor", error);
+					return null;
+				}
+				if (next === null || next === void 0) return null;
+				directory = next;
+				if (next.store !== void 0 && next.store !== null && typeof next.store.subscribe === "function") {
+					innerUnsubscribe = next.store.subscribe(notify);
+				}
+				notify();
+				return directory;
+			};
+			return {
+				store: {
+					subscribe: (listener) => {
+						listeners.add(listener);
+						resolve();
+						return () => {
+							listeners.delete(listener);
+							if (listeners.size === 0 && innerUnsubscribe !== null) {
+								try {
+									innerUnsubscribe();
+								} catch {
+									/* the inner store may already be gone */
+								}
+								innerUnsubscribe = null;
+							}
+						};
+					},
+					getSnapshot: () => {
+						const current = directory;
+						if (current !== null && current.store !== void 0 && current.store !== null && typeof current.store.getSnapshot === "function") {
+							return current.store.getSnapshot();
+						}
+						return LOADING_SEAT_SNAPSHOT;
+					},
+				},
+				load: () => {
+					const current = resolve();
+					if (current !== null && typeof current.load === "function") {
+						try {
+							current.load();
+						} catch (error) {
+							reportSeatFailure("directory.load", error);
+						}
+					}
+				},
+				select: (selection) => {
+					const current = resolve();
+					if (current === null || typeof current.select !== "function") return Promise.resolve(false);
+					return current.select(selection).then(() => true, () => false);
+				},
+			};
+		}
 		/**
 		 * The composer's model seat: the official two-level Model/Effort menu with a
 		 * model search field on top of the provider-grouped list.
@@ -1094,7 +1174,15 @@ window.__ModuleLoader__.load({
 				]);
 			})));
 			if (needle !== "" && flatFiltered.length === 0 && state.status !== "loading") modelPane.push(React.createElement("div", { className: "dshk-empty", key: "emptySearch" }, t("searchEmpty")));
-			if (needle === "" && state.status === "ready" && choices.length === 0) modelPane.push(React.createElement("div", { className: "dshk-empty", key: "empty" }, t("empty.models")));
+			/*
+			 * Any settled status with no rows must still say something: matching only
+			 * "ready" left the menu showing a bare search box over nothing when the
+			 * directory reported "idle" or "error".
+			 */
+			if (needle === "" && state.status !== "loading" && choices.length === 0) modelPane.push(React.createElement("div", {
+				className: state.error === null ? "dshk-empty" : "dshk-error",
+				key: "empty",
+			}, state.error === null ? t("empty.models") : t("loadFailed", { message: state.error })));
 
 			const panes = [];
 			if (pane === "effort") {
@@ -1190,6 +1278,7 @@ window.__ModuleLoader__.load({
 			"effort.providerDefault": "供应商默认",
 			"status.loading": "正在加载模型列表…",
 			"empty.models": "没有可用的模型",
+			"loadFailed": "模型列表加载失败：{message}",
 			"empty.efforts": "该模型没有可选的思考强度",
 			"retry": "重试",
 			"warning.groupLoad": "{name} 加载失败：{message}",
@@ -1210,6 +1299,7 @@ window.__ModuleLoader__.load({
 			"effort.providerDefault": "Provider default",
 			"status.loading": "Loading models…",
 			"empty.models": "No model available",
+			"loadFailed": "Could not load models: {message}",
 			"empty.efforts": "This model exposes no effort levels",
 			"retry": "Retry",
 			"warning.groupLoad": "{name} failed to load: {message}",
@@ -1761,34 +1851,29 @@ window.__ModuleLoader__.load({
 						 * entry and abdicate the seat, so degrade to a read-only face instead.
 						 */
 						/*
-						 * Both probes are wrapped SEPARATELY, and `available` defaults to true: it may
-						 * only become false when this is positively an addressed subagent session. The
-						 * seat renders null when unavailable, so reporting false on an unexpected error
-						 * would delete the composer button outright.
+						 * `available` defaults to true: it may only become false when this is
+						 * positively an addressed subagent session. The seat renders null when
+						 * unavailable, so reporting false on an unexpected error would delete the
+						 * composer button outright.
+						 *
+						 * The directory is resolved LAZILY, never here. This face is computed once per
+						 * binding, so calling directoryFor() now would throw during cold boot and pin an
+						 * empty directory for the whole session.
 						 */
-						let directory;
 						let available = true;
-						try {
-							directory = models.directoryFor(sessionId);
-						} catch (error) {
-							reportSeatFailure("modelDirectories.directoryFor", error);
-							directory = void 0;
-						}
 						try {
 							available = sessions.subagentAddress(sessionId) === void 0;
 						} catch (error) {
 							reportSeatFailure("sessions.subagentAddress", error);
 						}
-						if (directory === void 0) {
-							return { available, directory: IDLE_DIRECTORY, load: () => {}, select: () => Promise.resolve(false) };
-						}
+						const lazy = createLazyDirectory(() => models.directoryFor(sessionId));
 						return {
 							available,
-							directory: directory.store,
+							directory: lazy.store,
 							load: () => {
-								if (available) directory.load().catch(() => {});
+								if (available) lazy.load();
 							},
-							select: (selection) => available ? directory.select(selection).then(() => true, () => false) : Promise.resolve(false),
+							select: (selection) => available ? lazy.select(selection) : Promise.resolve(false),
 						};
 					},
 				}, ModelSelect));
