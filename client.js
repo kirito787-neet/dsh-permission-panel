@@ -77,6 +77,7 @@ window.__ModuleLoader__.load({
 			wpApplied: "已切换到 ",
 			wpDefaultSaved: "默认权限已保存。",
 			wpSwitchFailed: "权限切换失败：",
+			wpSessionUnreachable: "该会话暂时无法下发指令（尚未装载）。",
 			wpDefaultFailed: "默认权限保存失败：",
 			wpConfirmTitle: "确认启用完全权限？",
 			wpConfirmDesc: "完全权限会减少确认步骤，允许该会话直接执行敏感操作、修改文件或运行外部命令。仅在你信任该任务时继续。",
@@ -137,6 +138,7 @@ window.__ModuleLoader__.load({
 			wpApplied: "Switched to ",
 			wpDefaultSaved: "Default permission saved.",
 			wpSwitchFailed: "Permission switch failed: ",
+			wpSessionUnreachable: "This session cannot receive commands yet (not materialized).",
 			wpDefaultFailed: "Failed to save the default permission: ",
 			wpConfirmTitle: "Enable Full access?",
 			wpConfirmDesc: "Full access reduces confirmation steps and lets this session perform sensitive operations, file changes, or external commands directly. Continue only when you trust the task.",
@@ -1422,7 +1424,8 @@ window.__ModuleLoader__.load({
 
 
 			/** Avatar chip derived from the session title (stable color, first glyph). */
-			function avatarOf(title) {
+			function avatarOf(rawTitle) {
+				const title = rawTitle === null || rawTitle === void 0 ? "" : String(rawTitle);
 				let hash = 0;
 				for (let index = 0; index < title.length; index++) hash = (hash * 31 + title.charCodeAt(index)) >>> 0;
 				const hues = [212, 158, 262, 20, 330, 190, 45, 288];
@@ -1504,7 +1507,8 @@ window.__ModuleLoader__.load({
 				React.createElement("span", { className: "dshk-wpValue", key: "v" }, current !== void 0 ? current.label : t("wpUnavailable")),
 				React.createElement(ChevronDown, { className: "dshk-chevron" + (open ? " dshk-chevronOpen" : ""), key: "c" }),
 			]);
-			const menu = open && pos !== null ? createPortal(React.createElement("div", {
+			const portalHost = typeof document === "undefined" ? null : document.body;
+			const menu = open && pos !== null && portalHost !== null ? createPortal(React.createElement("div", {
 				ref: menuRef,
 				className: "dshk-wpMenu",
 				style: pos,
@@ -1522,7 +1526,7 @@ window.__ModuleLoader__.load({
 			}, [
 				React.createElement("span", { className: "dshk-wpItemMark", key: "m" }, option.value === value ? React.createElement(CheckIcon, {}) : presetMark(option.value)),
 				React.createElement("span", { className: "dshk-wpItemCopy", key: "c" }, React.createElement("span", { className: "dshk-wpItemLabel" }, option.label)),
-			]))), null) : null;
+			]))), portalHost) : null;
 			return React.createElement(React.Fragment, null, trigger, menu);
 			}
 
@@ -1586,13 +1590,10 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				if (preset === row.current) return;
-				const binding = sessionsRef !== null ? sessionsRef.binding(row.id) : void 0;
-				const session = binding !== void 0 && binding !== null ? binding.session : void 0;
-				if (session === void 0 || typeof session.command !== "function") {
-					setProblem(text("wpSwitchFailed") + "session not addressable yet");
-					return;
-				}
 				try {
+					const binding = sessionsRef !== null ? sessionsRef.binding(row.id) : void 0;
+					const session = binding !== void 0 && binding !== null ? binding.session : void 0;
+					if (session === void 0 || typeof session.command !== "function") throw new Error(text("wpSessionUnreachable"));
 					const result = await session.command("/permission " + preset);
 					if (!result.ok) throw new Error(result.error && result.error.message ? result.error.message : String(result.error));
 					if (!result.value.matched) throw new Error("the host offers no /permission command");
