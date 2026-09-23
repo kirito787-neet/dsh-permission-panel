@@ -213,6 +213,27 @@ window.__ModuleLoader__.load({
 			".dshk-cellLabel{white-space:nowrap;flex:none}",
 			".dshk-cellValue{text-overflow:ellipsis;white-space:nowrap;text-align:right;min-width:0;color:var(--dsw-alias-label-tertiary,#9aa0aa);flex:auto;overflow:hidden}",
 			".dshk-cellChevron{color:var(--dsw-alias-label-tertiary,#9aa0aa);flex:none}",
+		".dshk-wpHead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}",
+		".dshk-wpRow{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.16))}",
+		".dshk-wpRow:first-of-type{border-top:none}",
+		".dshk-wpAvatar{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:11px;font-weight:600;color:#fff}",
+		".dshk-wpCopy{flex:1;min-width:0}",
+		".dshk-wpTitle{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+		".dshk-wpSub{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:11px;line-height:16px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+		".dshk-wpTag{display:inline-block;margin-left:6px;padding:0 6px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:8px;font-size:10px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0aa);vertical-align:1px}",
+		".dshk-wpDot{display:inline-block;margin-right:5px;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-success-label,#4caf7d);vertical-align:1px}",
+		".dshk-wpSelect{font:inherit;font-size:12px;line-height:18px;max-width:200px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:9px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));color:var(--dsw-alias-label-secondary,#c8ccd4);padding:5px 8px 5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}",
+		".dshk-wpSelect:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#e8eaee)}",
+		".dshk-wpSelect:disabled{opacity:.45;cursor:not-allowed}",
+		".dshk-wpValue{overflow:hidden;text-overflow:ellipsis}",
+		".dshk-wpMenu{z-index:2147483002;background:var(--dsw-specific-menu,#26282d);min-width:230px;max-height:min(280px,60vh);overflow-y:auto;box-shadow:var(--dsw-elevation-prominent,0 10px 32px rgba(0,0,0,.35));border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));border-radius:12px;padding:4px;position:fixed}",
+		".dshk-wpItem{width:100%;color:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:8px;padding:7px 10px;display:flex;align-items:center;gap:8px}",
+		".dshk-wpItem:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}",
+		".dshk-wpItemMark{flex:none;width:14px;display:grid;place-items:center;color:var(--dsw-alias-label-primary,#e8eaee)}",
+		".dshk-wpItemCopy{flex:1;min-width:0}",
+		".dshk-wpItemLabel{font-size:13px;line-height:18px}",
+		".dshk-wpItemDesc{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:11px;line-height:15px;margin-top:1px}",
+		".dshk-wpState{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:12px}",
 		].join("\n");
 		const STYLE_ID = "dsh-hotkey-toolkit-styles";
 
@@ -862,7 +883,7 @@ window.__ModuleLoader__.load({
 			if (!available) return null;
 
 			const show = () => {
-				setPane("root");
+				setPane("model");
 				setQuery("");
 				setFailure(null);
 				setOpen(true);
@@ -947,6 +968,18 @@ window.__ModuleLoader__.load({
 			};
 
 			const modelPane = [];
+			if (reasoning !== void 0) modelPane.push(React.createElement("button", {
+				ref: itemRef(),
+				type: "button",
+				role: "menuitem",
+				className: "dshk-cell",
+				key: "effort",
+				onClick: () => setPane("effort"),
+			}, [
+				React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.effort")),
+				React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
+				React.createElement(ChevronRight, { key: "c" }),
+			]));
 			const searchField = React.createElement("div", { className: "dshk-searchWrap", key: "search" }, React.createElement("div", { className: "dshk-search" }, [
 				React.createElement(SearchIcon, { key: "icon" }),
 				React.createElement("input", {
@@ -1370,23 +1403,127 @@ window.__ModuleLoader__.load({
 		function PermissionRow(props) {
 			const { t, title, subtitle, tags, value, options, disabled, onSwitch } = props;
 			return React.createElement("div", { className: "dshk-wpRow", key: title }, [
+				avatarOf(title),
 				React.createElement("div", { className: "dshk-wpCopy", key: "copy" }, [
 					React.createElement("div", { className: "dshk-wpTitle", key: "t" }, title),
 					subtitle !== void 0 && subtitle !== "" ? React.createElement("div", { className: "dshk-wpSub", key: "s" }, subtitle) : null,
 				]),
-				tags !== void 0 && tags.length > 0 ? React.createElement("div", { key: "tags", className: "dshk-keys" }, tags.map((tag, index) => React.createElement("span", { className: "dshk-wpTag", key: index }, tag))) : null,
-				React.createElement("select", {
-					className: "dshk-wpSelect",
+				tags !== void 0 && tags.length > 0 ? React.createElement("div", { key: "tags", className: "dshk-keys" }, tags.map((tag, index) => tag !== null && typeof tag === "object" && tag.node === true ? React.createElement("span", { className: "dshk-wpDot", key: index, title: "running" }) : React.createElement("span", { className: "dshk-wpTag", key: index }, tag))) : null,
+				React.createElement(PresetDropdown, {
 					key: "sel",
-					value: value === null ? "" : value,
-					disabled: disabled || options.length === 0,
-					onChange: (event) => onSwitch(event.target.value),
-				}, options.map((option) => React.createElement("option", {
-						key: option.value,
-						value: option.value,
-						disabled: option.custom === true,
-					}, option.custom === true ? t("wpCustom") : option.label))),
+					value,
+					options: options.filter((option) => option.custom !== true),
+					disabled,
+					onSwitch,
+					t,
+				}),
 				]);
+			}
+
+
+			/** Avatar chip derived from the session title (stable color, first glyph). */
+			function avatarOf(title) {
+				let hash = 0;
+				for (let index = 0; index < title.length; index++) hash = (hash * 31 + title.charCodeAt(index)) >>> 0;
+				const hues = [212, 158, 262, 20, 330, 190, 45, 288];
+				const color = "hsl(" + hues[hash % hues.length] + " 55% 45%)";
+				const glyph = (title.trim()[0] ?? "?").toUpperCase();
+				return React.createElement("span", { className: "dshk-wpAvatar", key: "avatar", style: { background: color } }, glyph);
+			}
+
+			/** Preset-mark glyph for the dropdown items. */
+			function presetMark(preset) {
+				const palette = { "read-only": "#7b828c", "workspace-write": "#3b6fe0", "danger-full-access": "#e0a03b" };
+				return React.createElement("span", { style: { color: palette[preset] ?? "#7b828c", flex: "none" } }, "\u25cf");
+			}
+
+			/**
+			 * Styled preset dropdown: a button + portal menu (fixed, viewport-clamped,
+			 * outside-click + Escape to close). Replaces the native <select> so rows can
+			 * carry marks and descriptions consistent with the rest of DSH.
+			 */
+			function PresetDropdown(props) {
+				const { value, options, disabled, onSwitch, t } = props;
+				const [open, setOpen] = React.useState(false);
+				const [pos, setPos] = React.useState(null);
+				const btnRef = React.useRef(null);
+				const menuRef = React.useRef(null);
+				const current = options.find((option) => option.value === value);
+				React.useLayoutEffect(() => {
+					if (!open) {
+						setPos(null);
+						return;
+					}
+					const place = () => {
+						const rect = btnRef.current?.getBoundingClientRect();
+						if (rect === void 0) return;
+						const MARGIN = 8;
+						const width = menuRef.current?.offsetWidth ?? 230;
+						const height = menuRef.current?.offsetHeight ?? 0;
+						let x = rect.right - width;
+						let y = rect.bottom + 6;
+						if (width > 0) x = Math.min(Math.max(x, MARGIN), window.innerWidth - width - MARGIN);
+						if (height > 0 && y + height > window.innerHeight - MARGIN) y = Math.max(MARGIN, rect.top - height - 6);
+						setPos({ left: x, top: y });
+					};
+					place();
+					window.addEventListener("resize", place);
+					window.addEventListener("scroll", place, true);
+					return () => {
+						window.removeEventListener("resize", place);
+						window.removeEventListener("scroll", place, true);
+					};
+				}, [open]);
+				React.useEffect(() => {
+					if (!open) return;
+					const onDown = (event) => {
+						if (btnRef.current?.contains(event.target) === true) return;
+						if (menuRef.current?.contains(event.target) === true) return;
+						setOpen(false);
+					};
+					const onKey = (event) => {
+						if (event.key === "Escape") setOpen(false);
+					};
+					document.addEventListener("mousedown", onDown);
+					document.addEventListener("keydown", onKey);
+					return () => {
+						document.removeEventListener("mousedown", onDown);
+						document.removeEventListener("keydown", onKey);
+					};
+				}, [open]);
+							const trigger = React.createElement("button", {
+				ref: btnRef,
+				type: "button",
+				className: "dshk-wpSelect",
+				disabled: disabled || options.length === 0,
+				"aria-haspopup": "listbox",
+				"aria-expanded": open,
+				onClick: () => setOpen(!open),
+			}, [
+				current !== void 0 ? React.createElement("span", { key: "dot" }, presetMark(current.value)) : null,
+				React.createElement("span", { className: "dshk-wpValue", key: "v" }, current !== void 0 ? current.label : t("wpUnavailable")),
+				React.createElement(ChevronDown, { className: "dshk-chevron" + (open ? " dshk-chevronOpen" : ""), key: "c" }),
+			]);
+			const menu = open && pos !== null ? createPortal(React.createElement("div", {
+				ref: menuRef,
+				className: "dshk-wpMenu",
+				style: pos,
+				role: "listbox",
+			}, options.map((option) => React.createElement("button", {
+				key: option.value,
+				type: "button",
+				role: "option",
+				"aria-selected": option.value === value,
+				className: "dshk-wpItem",
+				onClick: () => {
+					setOpen(false);
+					if (option.value !== value) onSwitch(option.value);
+				},
+			}, [
+				React.createElement("span", { className: "dshk-wpItemMark", key: "m" }, option.value === value ? React.createElement(CheckIcon, {}) : presetMark(option.value)),
+				React.createElement("span", { className: "dshk-wpItemCopy", key: "c" }, React.createElement("span", { className: "dshk-wpItemLabel" }, option.label)),
+			]))), null) : null;
+			return React.createElement(React.Fragment, null, trigger, menu);
 			}
 
 		/**
@@ -1426,7 +1563,7 @@ window.__ModuleLoader__.load({
 					const current = permission !== void 0 && permission !== null && typeof permission.currentValue === "string" ? permission.currentValue : null;
 					const tags = [];
 					if (summary.id === sessions.current) tags.push(t("wpCurrent"));
-					if (summary.running === true) tags.push("●");
+					if (summary.running === true) tags.push({ node: true, key: "run" });
 					out.push({
 						id: summary.id,
 						title: summary.displayTitle || summary.id,
@@ -1496,13 +1633,14 @@ window.__ModuleLoader__.load({
 				React.createElement("div", { className: "dshk-card", key: "default" }, [
 					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
 						React.createElement("h4", { key: "h" }, t("wpDefaultSection")),
-						React.createElement("select", {
-							className: "dshk-wpSelect",
+						React.createElement(PresetDropdown, {
 							key: "sel",
-							value: panel.current === null ? "" : panel.current,
-							disabled: panel.writable !== true || defaultBusy || defaultOptions.length === 0,
-							onChange: (event) => switchDefault(event.target.value),
-						}, defaultOptions.map((option) => React.createElement("option", { key: option.value, value: option.value }, option.label))),
+							value: panel.current,
+							options: defaultOptions,
+							disabled: panel.writable !== true || defaultBusy,
+							onSwitch: switchDefault,
+							t,
+						}),
 					]),
 					React.createElement("div", { className: "dshk-hint", key: "hint" }, panel.status === "error" ? defaultState : t("wpDefaultHint")),
 				]),
