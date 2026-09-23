@@ -1,7 +1,7 @@
 {
   "name": "dsh-hotkey-toolkit",
-  "version": "1.0.0",
-  "description": "DSH 快捷键工具包：Ctrl+R 刷新界面、Ctrl+Shift+R 重启 DSH、可自定义组合键切换兼容/扩展/增强模式，并在输入框模型选择列表上方提供模型搜索框。",
+  "version": "1.1.0",
+  "description": "DSH 快捷键工具包：Ctrl+R 刷新界面、Ctrl+Shift+R 重启 DSH、可自定义组合键切换兼容/扩展/增强模式，输入框模型选择列表上方提供模型搜索框，并新增工作区权限面板统一查看与切换所有会话的权限预设。",
   "type": "module",
   "main": "./index.js",
   "exports": {

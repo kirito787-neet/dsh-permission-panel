@@ -14,6 +14,15 @@ window.__ModuleLoader__.load({
 		const NS = "hotkeyToolkit";
 		/** Namespace of the Desktop-owned settings section this plugin drives. */
 		const DESKTOP_NS = "dsh-desktop";
+		/** Host settings namespace carrying the new-session default permission preset. */
+		const PERMISSION_SETTINGS_NS = "permission";
+		/** Fallback options for the default-preset cell when the schema offers none. */
+		const FALLBACK_PRESETS = ["read-only", "workspace-write", "danger-full-access"];
+		/** Default-preset options derived from the schema's own choices when available. */
+		let defaultPresetOptions = (current) => FALLBACK_PRESETS.map((value) => ({ id: value, label: value }));
+		/** Live sessions service binding + its list snapshot store (late-bound in apply). */
+		let sessionsStore = null;
+		let sessionsRef = null;
 		/** localStorage key holding the user's shortcut preferences. */
 		const STORAGE_KEY = "dsh.hotkeyToolkit.v1";
 		/** Electron preload bridge exposing argument-free Desktop actions. */
@@ -56,6 +65,31 @@ window.__ModuleLoader__.load({
 			searchClear: "清除搜索",
 			modeFailed: "模式切换失败：",
 			actionFailed: "操作失败：",
+			wpNav: "工作区权限",
+			wpIntro: "查看并调整每个会话的工作区权限（沙盒模式 + 审批策略），并可设置新会话的默认权限；改动即时生效。",
+			wpSessionSection: "会话权限",
+			wpDefaultSection: "新会话默认权限",
+			wpDefaultHint: "仅对之后新建的会话生效，已有会话不受影响。",
+			wpRefresh: "刷新列表",
+			wpEmpty: "当前没有会话。",
+			wpUnavailable: "不可用",
+			wpLoadFailed: "默认权限加载失败：",
+			wpApplied: "已切换到 ",
+			wpDefaultSaved: "默认权限已保存。",
+			wpSwitchFailed: "权限切换失败：",
+			wpDefaultFailed: "默认权限保存失败：",
+			wpConfirmTitle: "确认启用完全权限？",
+			wpConfirmDesc: "完全权限会减少确认步骤，允许该会话直接执行敏感操作、修改文件或运行外部命令。仅在你信任该任务时继续。",
+			wpParent: "子会话",
+			wpCurrent: "当前",
+			wpCustom: "自定义",
+			wpCount: "会话数：",
+			wpPresetReadOnly: "仅可查看",
+			wpPresetWorkspaceWrite: "工作区内修改",
+			wpPresetFullAccess: "完全权限",
+			wpAcknowledge: "我已了解风险，并愿意继续",
+			confirmEnable: "启用完全权限",
+			cancel: "取消",
 		};
 		const en = {
 			nav: "Hotkey Toolkit",
@@ -91,6 +125,31 @@ window.__ModuleLoader__.load({
 			searchClear: "Clear search",
 			modeFailed: "Mode switch failed: ",
 			actionFailed: "Operation failed: ",
+			wpNav: "Workspace Permissions",
+			wpIntro: "View and adjust each session's workspace permissions (sandbox mode + approval policy), plus the default for new sessions. Changes apply immediately.",
+			wpSessionSection: "Session permissions",
+			wpDefaultSection: "Default permission for new sessions",
+			wpDefaultHint: "Applies to sessions created afterwards only; existing sessions keep their permissions.",
+			wpRefresh: "Refresh list",
+			wpEmpty: "No sessions right now.",
+			wpUnavailable: "Unavailable",
+			wpLoadFailed: "Failed to load the default permission: ",
+			wpApplied: "Switched to ",
+			wpDefaultSaved: "Default permission saved.",
+			wpSwitchFailed: "Permission switch failed: ",
+			wpDefaultFailed: "Failed to save the default permission: ",
+			wpConfirmTitle: "Enable Full access?",
+			wpConfirmDesc: "Full access reduces confirmation steps and lets this session perform sensitive operations, file changes, or external commands directly. Continue only when you trust the task.",
+			wpParent: "subagent",
+			wpCurrent: "current",
+			wpCustom: "Custom",
+			wpCount: "Sessions: ",
+			wpPresetReadOnly: "Read Only",
+			wpPresetWorkspaceWrite: "Workspace Write",
+			wpPresetFullAccess: "Full access",
+			wpAcknowledge: "I understand the risks and want to continue",
+			confirmEnable: "Enable Full access",
+			cancel: "Cancel",
 		};
 
 		/** Plugin styles. Class names are prefixed dshk- to stay collision-free. */
@@ -438,6 +497,35 @@ window.__ModuleLoader__.load({
 			}
 			await scope.set("mode", mode);
 			notify(text("savedRestarting"));
+		}
+
+		/** Preset machine value that must pass an explicit risk gate before switching. */
+		const FULL_ACCESS_PRESET = "danger-full-access";
+		/** Built-in preset labels, per locale dictionary key. */
+		const PRESET_LABEL_KEYS = {
+			"read-only": "wpPresetReadOnly",
+			"workspace-write": "wpPresetWorkspaceWrite",
+			[FULL_ACCESS_PRESET]: "wpPresetFullAccess",
+		};
+		/** Turn a kebab-case preset key into Title Case for unknown table entries. */
+		function titleCasePreset(name) {
+			return String(name).split("-").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+		}
+		/** User-facing label for one preset value; unknown values render title-cased. */
+		function presetLabel(value, t) {
+			const key = PRESET_LABEL_KEYS[value];
+			return key === void 0 ? titleCasePreset(value) : t(key);
+		}
+
+		/**
+		 * Subscribe React to the sessions list snapshot (useSyncExternalStore:
+		 * plain subscribe + getSnapshot on the controller's snapshot store).
+		 */
+		function useSessions() {
+			return React.useSyncExternalStore(
+				(listener) => sessionsStore.subscribe(listener),
+				() => sessionsStore.getSnapshot(),
+			);
 		}
 
 		/** One recorded-shortcut row: label, optional hint, keycaps, and controls. */
@@ -1082,6 +1170,17 @@ window.__ModuleLoader__.load({
 				modeScope = scope.settingsScope.bind({ namespace: DESKTOP_NS });
 			});
 
+			/*
+			 * The sessions service (list snapshot store + session verbs), bound once so
+			 * its lifetime belongs to this plugin's fiber. The permissions panel reads
+			 * the list snapshot for every session's permission projection and issues
+			 * /permission commands through each session's binding.
+			 */
+			ctx.inject(["sessions"], (scope) => {
+				sessionsStore = scope.sessions.list;
+				sessionsRef = scope.sessions;
+			});
+
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
 				id: "hotkey-toolkit",
@@ -1132,7 +1231,345 @@ window.__ModuleLoader__.load({
 				};
 			}, "hotkey-toolkit: global shortcuts");
 
-			ctx.inject(["slots", "modelDirectories", "sessions"], (scope) => {
+			/*
+		 * Permissions panel state: the default-preset cell (settings mirror read +
+		 * remote.settings.mutate write, mirroring the official permission row) and the
+		 * confirmation gate standing between Full access and one click.
+		 */
+		const permissionPanel = {
+			describeFace: null,
+			settingsCtx: null,
+			unfollow: null,
+			current: null,
+			options: [],
+			revision: 0,
+			writable: false,
+			saving: false,
+			status: "idle",
+			error: null,
+			version: 0,
+			notify() {
+				this.version += 1;
+				for (const listener of permissionPanelListeners) listener();
+			},
+			async load() {
+				const face = this.describeFace;
+				if (face === null) return;
+				if (this.unfollow === null) {
+					this.unfollow = face.subscribe(() => this.derive());
+				}
+				this.status = "loading";
+				this.error = null;
+				this.notify();
+				try {
+					await face.ensure();
+				} catch (cause) {
+					this.fail(cause);
+					return;
+				}
+				this.derive();
+			},
+			derive() {
+				const face = this.describeFace;
+				if (face === null) return;
+				const mirrored = face.getSnapshot();
+				const view = mirrored.view === void 0 ? null : mirrored.view.namespaces.find((entry) => entry.ns === PERMISSION_SETTINGS_NS) ?? null;
+				if (view === null) {
+					this.current = null;
+					this.options = [];
+					this.writable = false;
+					this.status = mirrored.status === "unavailable" ? "unavailable" : "loading";
+					this.notify();
+					return;
+				}
+				const value = view.value !== null && typeof view.value === "object" ? view.value.defaultPreset : void 0;
+				if (typeof value !== "string") {
+					this.fail(new Error("permission settings has no defaultPreset value"));
+					return;
+				}
+				this.current = value;
+				this.options = defaultPresetOptions(value);
+				this.writable = mirrored.view.writable === true;
+				this.revision = view.revision;
+				this.status = "ready";
+				this.error = null;
+				this.notify();
+			},
+			async select(preset) {
+				const panelCtx = this.settingsCtx;
+				if (panelCtx === null || this.saving) return;
+				this.saving = true;
+				this.status = "saving";
+				this.error = null;
+				this.notify();
+				try {
+					const response = await panelCtx.remote.settings.mutate(PERMISSION_SETTINGS_NS, [{
+						op: "set",
+						path: ["defaultPreset"],
+						value: preset,
+					}], this.revision);
+					if (!response.ok) throw new Error(response.error && response.error.message ? response.error.message : String(response.error));
+					this.describeFace.acceptView(response.value);
+					notify(text("wpDefaultSaved"));
+				} catch (cause) {
+					this.fail(cause);
+				} finally {
+					this.saving = false;
+				}
+			},
+			fail(cause) {
+				this.status = "error";
+				this.error = describe(cause);
+				this.notify();
+			},
+			dispose() {
+				if (this.unfollow !== null) {
+					this.unfollow();
+					this.unfollow = null;
+				}
+			},
+		};
+		const permissionPanelListeners = new Set();
+		const usePermissionPanel = () => React.useSyncExternalStore(
+			(listener) => {
+				permissionPanelListeners.add(listener);
+				return () => {
+					permissionPanelListeners.delete(listener);
+				};
+			},
+			() => permissionPanel.version,
+		);
+		ctx.effect(() => () => {
+			permissionPanel.dispose();
+		}, "hotkey-toolkit: permissions panel mirror dispose");
+		ctx.inject(["settingsScope", "remote", "settingsSchema"], (scope) => {
+			permissionPanel.describeFace = scope.settingsScope.describe();
+			permissionPanel.settingsCtx = scope;
+			const schema = scope.settingsSchema;
+			defaultPresetOptions = (current) => {
+				try {
+					const descriptor = schema.describe();
+					const namespace = descriptor.namespaces.find((entry) => entry.ns === PERMISSION_SETTINGS_NS);
+					if (namespace === void 0) return [];
+					const node = schema.nodeAtPath(schema.rehydrate(namespace.schema), ["defaultPreset"]);
+					if (node === void 0) return [];
+					const candidates = node.type === "union" ? node.list ?? [] : [node];
+					const options = candidates.flatMap((candidate) => {
+						if (candidate === null || typeof candidate !== "object") return [];
+						if (candidate.type !== "const" || typeof candidate.value !== "string") return [];
+						return [{ id: candidate.value, label: candidate.value }];
+					});
+					return options.some((option) => option.id === current) ? options : [{ id: current, label: current }, ...options];
+				} catch {
+					return [];
+				}
+			};
+		});
+
+		/** One permission row: session title, optional tags, and the preset selector. */
+		function PermissionRow(props) {
+			const { t, title, subtitle, tags, value, options, disabled, onSwitch } = props;
+			return React.createElement("div", { className: "dshk-wpRow", key: title }, [
+				React.createElement("div", { className: "dshk-wpCopy", key: "copy" }, [
+					React.createElement("div", { className: "dshk-wpTitle", key: "t" }, title),
+					subtitle !== void 0 && subtitle !== "" ? React.createElement("div", { className: "dshk-wpSub", key: "s" }, subtitle) : null,
+				]),
+				tags !== void 0 && tags.length > 0 ? React.createElement("div", { key: "tags", className: "dshk-keys" }, tags.map((tag, index) => React.createElement("span", { className: "dshk-wpTag", key: index }, tag))) : null,
+				React.createElement("select", {
+					className: "dshk-wpSelect",
+					key: "sel",
+					value: value === null ? "" : value,
+					disabled: disabled || options.length === 0,
+					onChange: (event) => onSwitch(event.target.value),
+				}, options.map((option) => React.createElement("option", {
+						key: option.value,
+						value: option.value,
+						disabled: option.custom === true,
+					}, option.custom === true ? t("wpCustom") : option.label))),
+				]);
+			}
+
+		/**
+		 * Workspace-permissions panel: every session's permission projection (read
+		 * straight from the sessions list snapshot, no session needs to be opened) with
+		 * a per-row preset selector riding the /permission command, plus the new-session
+		 * default write-through. Full access always passes the confirmation gate first.
+		 */
+		function PermissionsSection(props) {
+			const { t } = props;
+			const sessions = useSessions();
+			usePermissionPanel();
+			const panel = permissionPanel;
+			const [gate, setGate] = React.useState(null);
+			const [acknowledged, setAcknowledged] = React.useState(false);
+			const [problem, setProblem] = React.useState(null);
+
+			React.useEffect(() => {
+				panel.load();
+			}, [panel]);
+
+			React.useEffect(() => {
+				if (gate === null) return;
+				setAcknowledged(false);
+			}, [gate]);
+
+			const rows = React.useMemo(() => {
+				const out = [];
+				for (const id of sessions.ids) {
+					const summary = sessions.byId[id];
+					if (summary === void 0 || summary.parentId !== void 0) continue;
+					const values = summary.projectionValues;
+					const permission = values !== void 0 ? values.permissions : void 0;
+					const options = permission !== void 0 && permission !== null && Array.isArray(permission.options)
+						? permission.options.filter((option) => option && option.value !== "custom").map((option) => ({ value: option.value, label: presetLabel(option.value, t) }))
+						: [];
+					const current = permission !== void 0 && permission !== null && typeof permission.currentValue === "string" ? permission.currentValue : null;
+					const tags = [];
+					if (summary.id === sessions.current) tags.push(t("wpCurrent"));
+					if (summary.running === true) tags.push("●");
+					out.push({
+						id: summary.id,
+						title: summary.displayTitle || summary.id,
+						subtitle: typeof summary.cwd === "string" ? summary.cwd : "",
+						tags,
+						current,
+						options,
+						capable: options.length > 0,
+					});
+				}
+				out.sort((a, b) => a.title.localeCompare(b.title));
+				return out;
+			}, [sessions, t]);
+
+			const switchSession = async (row, preset) => {
+				setProblem(null);
+				if (row.capable !== true) return;
+				if (preset === FULL_ACCESS_PRESET && row.current !== FULL_ACCESS_PRESET) {
+					setGate({ kind: "session", id: row.id });
+					return;
+				}
+				if (preset === row.current) return;
+				const binding = sessionsRef !== null ? sessionsRef.binding(row.id) : void 0;
+				const session = binding !== void 0 && binding !== null ? binding.session : void 0;
+				if (session === void 0 || typeof session.command !== "function") {
+					setProblem(text("wpSwitchFailed") + "session not addressable yet");
+					return;
+				}
+				try {
+					const result = await session.command("/permission " + preset);
+					if (!result.ok) throw new Error(result.error && result.error.message ? result.error.message : String(result.error));
+					if (!result.value.matched) throw new Error("the host offers no /permission command");
+					notify(text("wpApplied") + presetLabel(preset, t));
+				} catch (cause) {
+					setProblem(text("wpSwitchFailed") + describe(cause));
+				}
+			};
+
+			const switchDefault = (preset) => {
+				setProblem(null);
+				if (preset === FULL_ACCESS_PRESET && panel.current !== FULL_ACCESS_PRESET) {
+					setGate({ kind: "default" });
+					return;
+				}
+				if (preset !== panel.current) panel.select(preset).catch((cause) => setProblem(text("wpDefaultFailed") + describe(cause)));
+			};
+
+			const confirmGate = () => {
+				if (gate === null) return;
+				const pending = gate;
+				setGate(null);
+				if (pending.kind === "session") {
+					const row = rows.find((entry) => entry.id === pending.id);
+					if (row !== void 0) switchSession(row, FULL_ACCESS_PRESET);
+				} else {
+					panel.select(FULL_ACCESS_PRESET).catch((cause) => setProblem(text("wpDefaultFailed") + describe(cause)));
+				}
+			};
+
+			const defaultOptions = panel.options.map((option) => ({ value: option.id, label: presetLabel(option.id, t) }));
+			const defaultBusy = panel.status === "loading" || panel.status === "saving";
+			const defaultState = panel.status === "error"
+				? text("wpLoadFailed") + (panel.error ?? "")
+				: panel.status === "unavailable" ? t("wpUnavailable") : null;
+			return React.createElement("div", { className: "dshk-page" }, [
+				React.createElement("p", { className: "dshk-intro", key: "intro" }, t("wpIntro")),
+				React.createElement("div", { className: "dshk-card", key: "default" }, [
+					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
+						React.createElement("h4", { key: "h" }, t("wpDefaultSection")),
+						React.createElement("select", {
+							className: "dshk-wpSelect",
+							key: "sel",
+							value: panel.current === null ? "" : panel.current,
+							disabled: panel.writable !== true || defaultBusy || defaultOptions.length === 0,
+							onChange: (event) => switchDefault(event.target.value),
+						}, defaultOptions.map((option) => React.createElement("option", { key: option.value, value: option.value }, option.label))),
+					]),
+					React.createElement("div", { className: "dshk-hint", key: "hint" }, panel.status === "error" ? defaultState : t("wpDefaultHint")),
+				]),
+				React.createElement("div", { className: "dshk-card", key: "sessions" }, [
+					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
+						React.createElement("h4", { key: "h" }, t("wpSessionSection") + " · " + t("wpCount") + rows.length),
+						React.createElement("button", {
+							type: "button",
+							className: "dshk-btn",
+							key: "btn",
+							onClick: () => {
+								if (sessionsRef !== null) sessionsRef.refresh().catch(() => {});
+							},
+						}, t("wpRefresh")),
+					]),
+					rows.length === 0 ? React.createElement("div", { className: "dshk-wpState", key: "empty" }, t("wpEmpty")) : rows.map((row) => React.createElement(PermissionRow, {
+						key: row.id,
+						t,
+						title: row.title,
+						subtitle: row.subtitle,
+						tags: row.tags,
+						value: row.current,
+						options: row.options,
+						disabled: row.capable !== true,
+						onSwitch: (preset) => switchSession(row, preset),
+					})),
+				]),
+				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
+				gate !== null ? React.createElement("div", {
+					className: "dshk-card",
+					key: "gate",
+					style: { borderColor: "var(--dsw-alias-state-warn-label,#e0a03b)" },
+				}, [
+					React.createElement("h4", { key: "h" }, t("wpConfirmTitle")),
+					React.createElement("div", { className: "dshk-hint", key: "d" }, t("wpConfirmDesc")),
+					React.createElement("label", { className: "dshk-switch", key: "ack", style: { marginBottom: 8 } }, React.createElement("input", {
+						type: "checkbox",
+						checked: acknowledged,
+						onChange: (event) => setAcknowledged(event.target.checked),
+					}), text("wpAcknowledge")),
+					React.createElement("div", { className: "dshk-keys", key: "btns" }, [
+						React.createElement("button", {
+							type: "button",
+							className: "dshk-btn",
+							key: "cancel",
+							onClick: () => setGate(null),
+						}, t("cancel")),
+						React.createElement("button", {
+							type: "button",
+							className: "dshk-btn dshk-recording",
+							key: "ok",
+							disabled: acknowledged !== true,
+							onClick: confirmGate,
+						}, t("confirmEnable")),
+					]),
+				]) : null,
+			]);
+		}
+
+		ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
+			name: "settings.section",
+			id: "workspace-permissions",
+			order: 61,
+			label: () => translate("wpNav"),
+			locale: NS,
+		}, PermissionsSection)), "hotkey-toolkit: permissions panel");
+		ctx.inject(["slots", "modelDirectories", "sessions"], (scope) => {
 				const models = scope.modelDirectories;
 				const sessions = scope.sessions;
 				scope.slots.inject("conversation.input.model", () => scope.slots.register({
