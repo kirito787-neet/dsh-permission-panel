@@ -1,0 +1,6 @@
+# dsh-hotkey-toolkit bundle patch: mounts the plugin row into a profile layer stack.
+# The row name resolves to this package; the browser half is picked up by
+# client-modules scanning the `dsh.client` declaration below.
+- insert:
+    - id: dsh-hotkey-toolkit
+      name: 'dsh-hotkey-toolkit'
