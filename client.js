@@ -159,6 +159,11 @@ window.__ModuleLoader__.load({
 			".dshk-page{max-width:680px;font-size:13px;line-height:1.6;color:var(--dsw-alias-label-primary,#e8eaee)}",
 			".dshk-page p{margin:0}",
 			".dshk-intro{margin:0 0 16px;color:var(--dsw-alias-label-secondary,#c8ccd4)}",
+			/* Centered Full-access confirmation: a fixed overlay, independent of the panel flow. */
+			".dshk-overlay{position:fixed;inset:0;z-index:2147483004;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:24px}",
+			".dshk-modal{width:min(440px,100%);max-height:calc(100vh - 48px);overflow-y:auto;box-shadow:var(--dsw-elevation-prominent,0 10px 32px rgba(0,0,0,.35));border:1px solid var(--dsw-alias-state-warn-label,#e0a03b);border-radius:14px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-1,#26282d));color:var(--dsw-alias-label-primary,inherit);padding:18px 20px}",
+			".dshk-modal h4{margin:0 0 6px;font-size:15px;font-weight:600}",
+			".dshk-modalAck{margin:12px 0 16px}",
 			".dshk-card{border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));border-radius:12px;background:var(--dsw-alias-bg-layer-1,transparent);padding:14px 16px;margin-bottom:12px}",
 			".dshk-card h4{margin:0 0 2px;font-size:13px;font-weight:600}",
 			".dshk-hint{margin:2px 0 10px;color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:12px}",
@@ -1828,6 +1833,8 @@ window.__ModuleLoader__.load({
 			const [gate, setGate] = React.useState(null);
 			const [acknowledged, setAcknowledged] = React.useState(false);
 			const [problem, setProblem] = React.useState(null);
+			/** Portal host for the centered confirmation; <body> escapes the panel scroll box. */
+			const gateHost = typeof document === "undefined" ? null : document.body;
 
 			React.useEffect(() => {
 				panel.load();
@@ -1836,6 +1843,12 @@ window.__ModuleLoader__.load({
 			React.useEffect(() => {
 				if (gate === null) return;
 				setAcknowledged(false);
+				/** A centered modal is expected to close on Escape. */
+				const onKeyDown = (event) => {
+					if (event.key === "Escape") setGate(null);
+				};
+				document.addEventListener("keydown", onKeyDown);
+				return () => document.removeEventListener("keydown", onKeyDown);
 			}, [gate]);
 
 			const rows = React.useMemo(() => {
@@ -1866,13 +1879,17 @@ window.__ModuleLoader__.load({
 				return out;
 			}, [sessions, t]);
 
-			const switchSession = async (row, preset) => {
+			/*
+			 * Apply a preset to one session: the part that actually talks to the Host.
+			 *
+			 * Split out from the gate deliberately. The confirmation handler used to call
+			 * switchSession() again, which re-detected "full access from a non-full-access
+			 * session" (row.current has not changed yet) and reopened the very dialog just
+			 * confirmed - so Full access was never applied, only re-confirmed forever.
+			 */
+			const applySessionPreset = async (row, preset) => {
 				setProblem(null);
 				if (row.capable !== true) return;
-				if (preset === FULL_ACCESS_PRESET && row.current !== FULL_ACCESS_PRESET) {
-					setGate({ kind: "session", id: row.id });
-					return;
-				}
 				if (preset === row.current) return;
 				try {
 					const binding = sessionsRef !== null ? sessionsRef.binding(row.id) : void 0;
@@ -1885,6 +1902,17 @@ window.__ModuleLoader__.load({
 				} catch (cause) {
 					setProblem(text("wpSwitchFailed") + describe(cause));
 				}
+			};
+
+			/** Route a preset choice through the Full-access confirmation gate first. */
+			const switchSession = (row, preset) => {
+				setProblem(null);
+				if (row.capable !== true) return;
+				if (preset === FULL_ACCESS_PRESET && row.current !== FULL_ACCESS_PRESET) {
+					setGate({ kind: "session", id: row.id });
+					return;
+				}
+				applySessionPreset(row, preset);
 			};
 
 			const switchDefault = (preset) => {
@@ -1902,7 +1930,8 @@ window.__ModuleLoader__.load({
 				setGate(null);
 				if (pending.kind === "session") {
 					const row = rows.find((entry) => entry.id === pending.id);
-					if (row !== void 0) switchSession(row, FULL_ACCESS_PRESET);
+					/* Apply directly - switchSession() would reopen the gate just confirmed. */
+					if (row !== void 0) applySessionPreset(row, FULL_ACCESS_PRESET);
 				} else {
 					panel.select(FULL_ACCESS_PRESET).catch((cause) => setProblem(text("wpDefaultFailed") + describe(cause)));
 				}
@@ -1954,15 +1983,31 @@ window.__ModuleLoader__.load({
 					})),
 				]),
 				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
-				gate !== null ? React.createElement("div", {
-					className: "dshk-card",
+				/*
+				 * The Full-access confirmation is a CENTERED MODAL, portalled to <body>.
+				 *
+				 * It used to render as a card in the panel's own flow, i.e. after the whole
+				 * session list - so with a long list the user had to scroll to the very bottom
+				 * to find the dialog they had just triggered. A fixed overlay escapes the
+				 * panel's scroll container entirely and puts the gate where the eye already is.
+				 */
+				gate !== null && gateHost !== null ? createPortal(React.createElement("div", {
+					className: "dshk-overlay",
 					key: "gate",
-					style: { borderColor: "var(--dsw-alias-state-warn-label,#e0a03b)" },
+					onMouseDown: (event) => {
+						if (event.target === event.currentTarget) setGate(null);
+					},
+				}, React.createElement("div", {
+					className: "dshk-modal",
+					role: "dialog",
+					"aria-modal": "true",
+					"aria-label": t("wpConfirmTitle"),
 				}, [
 					React.createElement("h4", { key: "h" }, t("wpConfirmTitle")),
 					React.createElement("div", { className: "dshk-hint", key: "d" }, t("wpConfirmDesc")),
-					React.createElement("label", { className: "dshk-switch", key: "ack", style: { marginBottom: 8 } }, React.createElement("input", {
+					React.createElement("label", { className: "dshk-switch dshk-modalAck", key: "ack" }, React.createElement("input", {
 						type: "checkbox",
+						autoFocus: true,
 						checked: acknowledged,
 						onChange: (event) => setAcknowledged(event.target.checked),
 					}), text("wpAcknowledge")),
@@ -1981,7 +2026,7 @@ window.__ModuleLoader__.load({
 							onClick: confirmGate,
 						}, t("confirmEnable")),
 					]),
-				]) : null,
+				])), gateHost) : null,
 			]);
 		}
 

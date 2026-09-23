@@ -26,13 +26,15 @@ const mutateCalls = [];
 
 // ---- document stub (render touches it only through the portal host) ----
 const fakeBody = { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false };
+// Keydown listeners the panel registers while its confirmation modal is open.
+const keydownListeners = [];
 global.document = {
   body: fakeBody,
   head: { appendChild() {} },
   createElement: () => ({ style: {}, dataset: {}, setAttribute() {}, remove() {}, appendChild() {} }),
   getElementById: () => null,
-  addEventListener() {},
-  removeEventListener() {},
+  addEventListener(type, listener) { if (type === "keydown") keydownListeners.push(listener); },
+  removeEventListener(type, listener) { if (type === "keydown") { const at = keydownListeners.indexOf(listener); if (at >= 0) keydownListeners.splice(at, 1); } },
   querySelector: () => null,
 };
 // ---- window stub: capture the module definition, provide localStorage ----
@@ -217,24 +219,29 @@ const flush = async () => { for (let turn = 0; turn < 8; turn++) await Promise.r
 
 // Render once, then re-render with one PresetDropdown's open/pos hooks scripted
 // (what clicking its trigger does in the live UI).
+// Render one pass. `clearFirst` wipes the hook store, which is what the tests
+// want for a fresh mount; stateful flows (opening the confirmation, ticking its
+// checkbox, confirming) re-render with clearFirst=false so the state survives,
+// the way React preserves it.
+const renderOnce = (clearFirst) => {
+  // The second pass must PRESERVE the scripted open/pos slots, otherwise the
+  // dropdown the harness just opened is silently reset.
+  if (clearFirst) hookSlots.clear();
+  ownerCounter = 0;
+  dropdownOwners.length = 0;
+  hookOwner = "c" + (++ownerCounter);
+  hookSlot = 0;
+  const tree = renderNode(Panel({ t: translate }));
+  // Drain queued effects so the panel's mount load() runs, like React does.
+  const effects = pendingEffects.splice(0, pendingEffects.length);
+  for (const effect of effects) {
+    const cleanup = effect();
+    if (typeof cleanup === "function") cleanups.push(cleanup);
+  }
+  return tree;
+};
+
 const renderPanel = (openIndex) => {
-  const renderOnce = (clearFirst) => {
-    // The second pass must PRESERVE the scripted open/pos slots, otherwise the
-    // dropdown the harness just opened is silently reset.
-    if (clearFirst) hookSlots.clear();
-    ownerCounter = 0;
-    dropdownOwners.length = 0;
-    hookOwner = "c" + (++ownerCounter);
-    hookSlot = 0;
-    const tree = renderNode(Panel({ t: translate }));
-    // Drain queued effects so the panel's mount load() runs, like React does.
-    const effects = pendingEffects.splice(0, pendingEffects.length);
-    for (const effect of effects) {
-      const cleanup = effect();
-      if (typeof cleanup === "function") cleanups.push(cleanup);
-    }
-    return tree;
-  };
   renderOnce(true);
   const target = dropdownOwners.filter((entry) => entry.name === "PresetDropdown")[openIndex];
   if (target === undefined) throw new Error("no PresetDropdown instance at index " + openIndex + " (saw " + dropdownOwners.map((entry) => entry.name).join(",") + ")");
@@ -253,6 +260,19 @@ const cleanups = [];
 // index 1 = first session row ("Session A" sorts before "Session B").
 const DEFAULT_DROPDOWN = 0;
 const ROW_A_DROPDOWN = 1;
+
+// Open one PresetDropdown across a re-render, exactly as renderPanel scripts it.
+// Both slots are needed: the menu only renders when open AND pos is non-null, and
+// a headless harness cannot measure the trigger to place it.
+const openDropdown = (index) => {
+  const target = dropdownOwners.filter((entry) => entry.name === "PresetDropdown")[index];
+  if (target === undefined) throw new Error("no PresetDropdown at index " + index);
+  hookSlots.set(target.owner + "#0", { value: true });
+  hookSlots.set(target.owner + "#1", { value: { left: 10, top: 10 } });
+  const tree = renderOnce(false);
+  hookSlots.set(target.owner + "#1", { value: { left: 10, top: 10 } });
+  return tree;
+};
 
 (async () => {
   // Settle the panel's async settings-mirror load first: the default dropdown
@@ -301,6 +321,97 @@ const ROW_A_DROPDOWN = 1;
   const ops = mutateCalls[0][1];
   if (ops[0].path[0] !== "defaultPreset" || ops[0].value !== "read-only") throw new Error("case 5: unexpected settings op " + JSON.stringify(ops));
   if (mutateCalls[0][2] !== 1) throw new Error("case 5: expected the descriptor revision to ride along");
+
+  // ---- case 6: confirming Full access actually applies it (once) ----
+  // The confirmation handler used to call switchSession() again, which
+  // re-detected "full access from a non-full-access session" - row.current has not
+  // changed yet - and reopened the very dialog just confirmed. The preset was
+  // never sent, only re-confirmed forever.
+  commandCalls.length = 0;
+  portalCalls.length = 0;
+  hookSlots.clear();
+  let gateTree = renderOnce(true);
+  await flush();
+  const gateRows = collect(gateTree, (entry) => entry.props?.className === "dshk-wpRow");
+  const gateRowA = gateRows.find((row) => explain(row).includes("Session A"));
+  if (gateRowA === undefined) throw new Error("case 6: Session A row not found");
+  // Open the row's dropdown and pick Full access -> this must raise the gate.
+  gateTree = openDropdown(1);
+  const gateRowAOpen = collect(gateTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session A"));
+  const fullOption = optionNamed(gateRowAOpen, "danger-full-access");
+  if (fullOption === undefined) throw new Error("case 6: no Full access option on the Session A row");
+  // Portal calls so far: the row dropdown that is still open. The gate must add one more.
+  const gatePortalsBefore = portalCalls.length;
+  fullOption.props.onClick();
+  gateTree = renderOnce(false);
+  await flush();
+  if (commandCalls.length !== 0) throw new Error("case 6: Full access fired without confirmation, saw " + JSON.stringify(commandCalls));
+  const modal = collect(gateTree, (entry) => entry.props?.className === "dshk-modal")[0];
+  if (modal === undefined) throw new Error("case 6: picking Full access did not raise the confirmation");
+
+  // ---- case 7: the confirmation is a CENTERED MODAL, not a card in the list ----
+  // It used to render as a dshk-card in the panel flow, i.e. AFTER the whole
+  // session list, so a long list forced the user to scroll to the bottom to find
+  // the dialog they had just triggered.
+  if (collect(gateTree, (entry) => entry.props?.className === "dshk-overlay").length !== 1) {
+    throw new Error("case 7: the confirmation is not rendered as a fixed overlay");
+  }
+  if (collect(modal, (entry) => entry.props?.className === "dshk-card").length !== 0) {
+    throw new Error("case 7: the confirmation is still a panel card (it would sit below the list)");
+  }
+  if (modal.props?.role !== "dialog" || modal.props?.["aria-modal"] !== "true") {
+    throw new Error("case 7: the confirmation is not exposed as a modal dialog");
+  }
+  // The overlay must be a PORTAL to <body>. renderNode flattens portals into their
+  // children, so class names alone cannot tell a portalled dialog from one rendered
+  // inline at the end of the panel flow - and escaping that flow is the whole point.
+  if (portalCalls.length !== gatePortalsBefore + 1) {
+    throw new Error("case 7: the confirmation was not portalled; portal calls went " + gatePortalsBefore + " -> " + portalCalls.length);
+  }
+  if (portalCalls[portalCalls.length - 1] !== global.document.body) {
+    throw new Error("case 7: the confirmation portal did not mount on document.body");
+  }
+  // The overlay is a portal, so the only proof available here is the portal call
+  // itself: renderNode flattens portals into their children.
+  const ack = collect(modal, (entry) => entry.props?.type === "checkbox")[0];
+  if (ack === undefined) throw new Error("case 7: the confirmation has no acknowledgement checkbox");
+  const confirmBtn = collect(modal, (entry) => typeof entry.props?.onClick === "function" && explain(entry).includes("confirmEnable"))[0];
+  if (confirmBtn === undefined) throw new Error("case 7: the confirmation has no enable button");
+  if (confirmBtn.props.disabled !== true) throw new Error("case 7: the enable button is not gated on the acknowledgement");
+
+  // ---- case 8: acknowledging then confirming sends Full access exactly once ----
+  ack.props.onChange({ target: { checked: true } });
+  gateTree = renderOnce(false);
+  const modal2 = collect(gateTree, (entry) => entry.props?.className === "dshk-modal")[0];
+  const confirmBtn2 = collect(modal2, (entry) => typeof entry.props?.onClick === "function" && explain(entry).includes("confirmEnable"))[0];
+  if (confirmBtn2.props.disabled === true) throw new Error("case 8: the enable button stayed disabled after acknowledging");
+  confirmBtn2.props.onClick();
+  await flush();
+  if (commandCalls.length !== 1 || commandCalls[0] !== "/permission danger-full-access") {
+    throw new Error("case 8: confirming Full access did not apply it exactly once, saw " + JSON.stringify(commandCalls));
+  }
+  gateTree = renderOnce(false);
+  if (collect(gateTree, (entry) => entry.props?.className === "dshk-modal").length !== 0) {
+    throw new Error("case 8: the confirmation stayed open after being confirmed");
+  }
+
+  // ---- case 9: Escape closes the centered modal ----
+  hookSlots.clear();
+  let escTree = renderOnce(true);
+  await flush();
+  escTree = openDropdown(1);
+  const escRow = collect(escTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session A"));
+  optionNamed(escRow, "danger-full-access").props.onClick();
+  escTree = renderOnce(false);
+  if (collect(escTree, (entry) => entry.props?.className === "dshk-modal").length !== 1) {
+    throw new Error("case 9: the confirmation did not open");
+  }
+  if (keydownListeners.length === 0) throw new Error("case 9: the modal registers no key handler");
+  for (const listener of keydownListeners.slice()) listener({ key: "Escape" });
+  escTree = renderOnce(false);
+  if (collect(escTree, (entry) => entry.props?.className === "dshk-modal").length !== 0) {
+    throw new Error("case 9: Escape did not close the confirmation");
+  }
 
   console.log(
     "smoke ok: portals=" + portalCalls.length +
