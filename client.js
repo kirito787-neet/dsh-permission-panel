@@ -787,6 +787,21 @@ window.__ModuleLoader__.load({
 		 * fresh object literal here would itself crash the seat it exists to protect.
 		 */
 		const IDLE_SEAT_SNAPSHOT = Object.freeze({ current: null, status: "idle", error: null, groups: [], failures: [] });
+		/*
+		 * Last failures seen while building the seat face, parked on a global so a
+		 * user can read them back with `window.__dshHotkeySeat`. Degrading quietly is
+		 * right for the UI, but it must not hide the cause from a bug report.
+		 */
+		const SEAT_DIAGNOSTICS = [];
+		const reportSeatFailure = (where, error) => {
+			try {
+				SEAT_DIAGNOSTICS.push({ where, message: String(error && error.message ? error.message : error) });
+				if (SEAT_DIAGNOSTICS.length > 20) SEAT_DIAGNOSTICS.shift();
+				if (typeof window !== "undefined") window.__dshHotkeySeat = { failures: SEAT_DIAGNOSTICS };
+			} catch {
+				/* diagnostics must never break the seat */
+			}
+		};
 		const IDLE_DIRECTORY = Object.freeze({
 			subscribe: () => () => {},
 			getSnapshot: () => IDLE_SEAT_SNAPSHOT,
@@ -1745,16 +1760,27 @@ window.__ModuleLoader__.load({
 						 * yet (cold boot, session restore). Letting that escape would crash the
 						 * entry and abdicate the seat, so degrade to a read-only face instead.
 						 */
+						/*
+						 * Both probes are wrapped SEPARATELY, and `available` defaults to true: it may
+						 * only become false when this is positively an addressed subagent session. The
+						 * seat renders null when unavailable, so reporting false on an unexpected error
+						 * would delete the composer button outright.
+						 */
 						let directory;
-						let available = false;
+						let available = true;
 						try {
 							directory = models.directoryFor(sessionId);
-							available = sessions.subagentAddress(sessionId) === void 0;
-						} catch {
+						} catch (error) {
+							reportSeatFailure("modelDirectories.directoryFor", error);
 							directory = void 0;
 						}
+						try {
+							available = sessions.subagentAddress(sessionId) === void 0;
+						} catch (error) {
+							reportSeatFailure("sessions.subagentAddress", error);
+						}
 						if (directory === void 0) {
-							return { available: false, directory: IDLE_DIRECTORY, load: () => {}, select: () => Promise.resolve(false) };
+							return { available, directory: IDLE_DIRECTORY, load: () => {}, select: () => Promise.resolve(false) };
 						}
 						return {
 							available,

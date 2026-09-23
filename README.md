@@ -56,5 +56,7 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
 - 模式切换会先写入 `dsh-desktop` 设置（切换到非兼容模式时同时关闭浏览器访问与局域网暴露），再重启 DSH Desktop 生效。
 - 模型搜索通过以更低优先级遮蔽官方 `conversation.input.model` 席位实现；若本插件被卸载或出错，官方模型选择会自动恢复。
 - 正因如此，席位**不能抛错**：席位运行时对遮蔽型席位采用「一崩即退役」策略，首次渲染异常就会让本席位永久退场（直到重载），表现就是搜索框消失、官方两级菜单回归。因此席位对宿主快照做了防御性归一（`groups`/`failures` 非数组即降级为空），`directoryFor` 抛错时降级为只读空列表，而不是把异常抛给渲染器。
+- 席位里 `available` **默认 true**，只有在确知「这是被寻址的子会话」时才置 false——因为 `available === false` 时组件直接 `return null`，会把输入框的模型按钮整个抹掉。遇到异常一律保持可见并降级。
+- 降级时不会静默吞掉原因：最后一次失败会记录在 `window.__dshHotkeySeat`（含 `where` 与 `message`）。排查时在控制台执行 `window.__dshHotkeySeat` 即可看到是 `directoryFor` 还是 `subagentAddress` 出的问题。
 - 席位文案注册在 `hotkeyToolkit.seat` 命名空间；宿主的本地化**不跨命名空间回退**，因此该命名空间必须自带席位用到的全部键（缺失时会直接显示原始键名）。
 - 权限面板读取宿主的 `permissions` 会话投影（会话列表快照自带），切换走 `/permission` 斜杠命令，默认预设走 `permission` 设置命名空间——三者都是宿主原生通道，插件自身不存储任何权限状态。

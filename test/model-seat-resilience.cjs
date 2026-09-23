@@ -106,10 +106,11 @@ const fail = (message) => {
   const registrations = new Map();
   const noopStore = { subscribe: () => () => {}, getSnapshot: () => ({ current: null, status: "idle", error: null, groups: [], failures: [] }) };
   let directoryForImpl = () => ({ store: noopStore, load: () => Promise.resolve(), select: () => Promise.resolve(true) });
+  let subagentImpl = () => undefined;
   const scope = {
     slots: { inject: (name, factory) => factory(), register: (options, component) => { registrations.set(options.name, component); return () => {}; } },
     modelDirectories: { directoryFor: (sessionId) => directoryForImpl(sessionId) },
-    sessions: { list: noopStore, binding: () => undefined, refresh: async () => {}, subagentAddress: () => undefined },
+    sessions: { list: noopStore, binding: () => undefined, refresh: async () => {}, subagentAddress: () => subagentImpl() },
     settingsScope: { bind: () => ({ set: async () => {} }), describe: () => ({ subscribe: () => () => {}, ensure: async () => {}, getSnapshot: () => ({ status: "unavailable", error: null }), acceptView: () => {} }) },
     remote: { settings: { mutate: async () => ({ ok: true, value: {} }) } },
     settingsSchema: { describe: () => ({ namespaces: [] }), rehydrate: (value) => value, nodeAtPath: () => undefined },
@@ -178,7 +179,9 @@ const fail = (message) => {
   };
   plugin.apply(makeCtx(throwingScope));
   if (face === null) fail("an unresolved session aborted the seat registration");
-  if (face.available !== false) fail("an unresolved session should report unavailable, saw " + JSON.stringify(face.available));
+  // An unresolved session must NOT report unavailable: the seat renders null when
+  // unavailable, which removes the composer's model button entirely.
+  if (face.available !== true) fail("an unresolved session must keep the seat visible, saw available=" + JSON.stringify(face.available));
   if (await face.select({ provider: "p", model: "m" }) !== false) fail("select() must resolve false for an unresolved session");
   const idle = face.directory.getSnapshot();
   if (!Array.isArray(idle.groups) || !Array.isArray(idle.failures)) fail("the fallback store must publish arrays");
@@ -194,6 +197,50 @@ const fail = (message) => {
   // And the degraded face must itself mount without crashing the seat.
   const degraded = await openMenu(face.directory.getSnapshot());
   if (!degraded.ok) fail("the degraded face did not render: " + degraded.reason);
+
+  // The seat must still paint its trigger for an unresolved session: rendering
+  // null would delete the model button from the composer.
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = ReactDOMClient.createRoot(host);
+  const Trigger = () => React.createElement(ModelSeat, {
+    locked: false, available: face.available, directory: face.directory,
+    load: face.load, select: face.select, t,
+  });
+  await act(async () => { root.render(React.createElement(Trigger)); });
+  const trigger = host.querySelector(".dshk-trigger");
+  const triggerText = trigger === null ? null : trigger.textContent.trim();
+  await act(async () => { root.unmount(); });
+  host.remove();
+  if (trigger === null) fail("the model button disappeared for an unresolved session");
+
+  // sessions.subagentAddress() may also throw; that must not hide the seat either.
+  // Only a POSITIVE "this is an addressed subagent session" may hide it.
+  const cases = [
+    ["directoryFor throws", () => { directoryForImpl = () => { throw new Error("no binding"); }; }, undefined],
+    ["subagentAddress throws", () => { directoryForImpl = () => ({ store: noopStore, load: () => Promise.resolve(), select: () => Promise.resolve(true) }); subagentImpl = () => { throw new Error("boom"); }; }, undefined],
+    ["addressed subagent", () => { subagentImpl = () => "addr"; }, false],
+  ];
+  for (const [label, arrange, expectedAvailable] of cases) {
+    arrange();
+    let resolved = null;
+    const probeScope = {
+      ...scope,
+      slots: { inject: (name, factory) => factory(), register: (options) => { if (options.inject) resolved = options.inject("session-probe"); return () => {}; } },
+    };
+    plugin.apply(makeCtx(probeScope));
+    if (resolved === null) fail(label + ": the seat registration aborted");
+    if (expectedAvailable !== undefined && resolved.available !== expectedAvailable) {
+      fail(label + ": expected available=" + String(expectedAvailable) + ", saw " + JSON.stringify(resolved.available));
+    }
+    if (expectedAvailable === undefined && resolved.available !== true) {
+      fail(label + ": an unexpected error must keep the seat visible, saw available=" + JSON.stringify(resolved.available));
+    }
+    if (expectedAvailable === undefined) {
+      const shown = await openMenu(resolved.directory.getSnapshot());
+      if (!shown.ok) fail(label + ": " + shown.reason);
+    }
+  }
 
   console.log("model-seat-resilience ok: search box survives " + snapshots.length +
     " partial snapshots, an unresolved session, and the degraded face (no abdication)");
