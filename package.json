@@ -1,7 +1,7 @@
 {
   "name": "dsh-hotkey-toolkit",
-  "version": "1.3.0",
-  "description": "DSH 快捷键工具包：Ctrl+R 刷新界面、Ctrl+Shift+R 重启 DSH、可自定义组合键切换兼容/扩展/增强模式，保留原版两级模型菜单并在模型列表内提供搜索框，并新增工作区权限面板统一查看与切换所有会话的权限预设。",
+  "version": "1.4.0",
+  "description": "DSH 快捷键工具包（Web / Desktop 双载体）：Ctrl+R 刷新界面、Ctrl+Shift+R 重启 DSH、可自定义组合键切换兼容/扩展/增强模式，保留原版两级模型菜单并在模型列表内提供搜索框，并新增工作区权限面板统一查看与切换所有会话的权限预设。浏览器载体下自动隐藏重启与模式切换。",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -16,7 +16,26 @@
     "cordis.patch.yml",
     "README.md"
   ],
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "dsh-hotkey-toolkit",
+    "hotkey",
+    "shortcut",
+    "model-search",
+    "permission",
+    "plugin"
+  ],
   "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -34,7 +53,7 @@
     }
   },
   "scripts": {
-    "test": "node test/model-seat.cjs && node test/smoke.cjs",
+    "test": "node test/model-seat.cjs && node test/smoke.cjs && node test/platform.cjs",
     "test:dom": "node test/model-seat-dom.cjs && node test/model-seat-resilience.cjs"
   }
 }

@@ -30,11 +30,14 @@ window.__ModuleLoader__.load({
 		/** Loopback fallbacks, used when the renderer runs without the preload bridge. */
 		const RELOAD_PATH = "/api/desktop/developer/reload";
 		const RESTART_PATH = "/api/desktop/restart";
+		/** URL marker the Electron main process appends when it owns the window. */
+		const MODE_MARKER = "dsh-desktop-mode";
 
 		const zh = {
 			nav: "快捷键工具包",
 			title: "快捷键工具包",
 			intro: "全屏生效的快捷键：刷新界面、重启 DSH，以及切换窗口模式。改动即时生效，无需重载。",
+			introWeb: "全屏生效的快捷键：刷新界面。改动即时生效，无需重载。",
 			enable: "启用快捷键",
 			enableHint: "关闭后所有快捷键立即失效（模型搜索不受影响）。",
 			actionSection: "动作快捷键",
@@ -91,11 +94,15 @@ window.__ModuleLoader__.load({
 			wpAcknowledge: "我已了解风险，并愿意继续",
 			confirmEnable: "启用完全权限",
 			cancel: "取消",
+			desktopOnly: "该操作仅在 DSH Desktop 中可用。",
+			scopeUnavailable: "设置作用域不可用。",
+			webCarrierNote: "当前运行在浏览器（Web）载体中：刷新界面使用浏览器重新加载，重启 DSH 与窗口模式切换仅在 DSH Desktop 中可用，因此不在此显示。",
 		};
 		const en = {
 			nav: "Hotkey Toolkit",
 			title: "Hotkey Toolkit",
 			intro: "App-wide shortcuts: refresh the interface, restart DSH, and switch the window mode. Changes apply immediately, no reload needed.",
+			introWeb: "App-wide shortcuts: refresh the interface. Changes apply immediately, no reload needed.",
 			enable: "Enable shortcuts",
 			enableHint: "Turning this off disables every shortcut at once (model search is unaffected).",
 			actionSection: "Action shortcuts",
@@ -152,6 +159,9 @@ window.__ModuleLoader__.load({
 			wpAcknowledge: "I understand the risks and want to continue",
 			confirmEnable: "Enable Full access",
 			cancel: "Cancel",
+			desktopOnly: "This action is only available in DSH Desktop.",
+			scopeUnavailable: "Settings scope unavailable.",
+			webCarrierNote: "Running on the browser (Web) carrier: refresh reloads the page, and Restart DSH plus the window-mode switches exist only in DSH Desktop, so they are hidden here.",
 		};
 
 		/** Plugin styles. Class names are prefixed dshk- to stay collision-free. */
@@ -182,6 +192,7 @@ window.__ModuleLoader__.load({
 			".dshk-switch{display:flex;align-items:center;gap:8px;flex:none}",
 			".dshk-switch input{width:16px;height:16px;accent-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0);cursor:pointer}",
 			".dshk-note{margin-top:10px;color:var(--dsw-alias-state-warn-label,#e0a03b);font-size:11px;line-height:1.5}",
+			".dshk-platformNote{margin:-2px 0 12px;font-size:11px;line-height:1.6}",
 			".dshk-toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:2147483003;padding:9px 16px;border-radius:10px;background:var(--dsw-specific-menu,#26282d);color:var(--dsw-alias-label-primary,#e8eaee);box-shadow:var(--dsw-elevation-prominent,0 10px 32px rgba(0,0,0,.35));border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));font-size:12px;line-height:18px;pointer-events:none;max-width:min(420px,90vw);text-align:center}",
 			".dshk-root{min-width:0;position:relative}",
 			".dshk-trigger{min-width:0;max-width:min(360px,45cqw);height:28px;color:var(--dsw-alias-label-secondary,#c8ccd4);cursor:pointer;background:0 0;border:none;border-radius:24px;outline:none;align-items:center;gap:4px;padding:0 4px 0 8px;font-size:13px;font-weight:500;line-height:20px;display:flex}",
@@ -453,6 +464,33 @@ window.__ModuleLoader__.load({
 			return combo.split("+").map((part, index) => React.createElement("span", { className: "dshk-key", key: index }, part));
 		}
 
+		/**
+		 * Whether this page is carried by the DSH Desktop shell.
+		 *
+		 * The renderer is byte-identical on both carriers, so the shell has to be
+		 * detected from what only it contributes: the context-isolated
+		 * `dshDesktopActions` preload bridge, or the `dsh-desktop-mode` marker the
+		 * Electron main process appends to the window URL. A plain browser (the
+		 * `dsh web` carrier, or a remote browser session) has neither, and the
+		 * Desktop-only rows must not be offered there — restarting "DSH" and
+		 * switching a window mode are meaningless without the shell that owns them.
+		 *
+		 * Probed on every call rather than cached: the preload bridge is installed
+		 * before any bundle runs, but a plugin may be reloaded into a page whose
+		 * bridge arrives with a later generation, and a stale negative would
+		 * permanently hide rows the shell can serve.
+		 */
+		function hasDesktopHost() {
+			if (typeof window === "undefined") return false;
+			try {
+				const bridge = window[ACTIONS_BRIDGE];
+				if (bridge !== void 0 && bridge !== null && typeof bridge.invoke === "function") return true;
+				return new URLSearchParams(window.location.search).get(MODE_MARKER) !== null;
+			} catch {
+				return false;
+			}
+		}
+
 		/** Invoke one argument-free Desktop action, preferring the preload bridge. */
 		async function desktopAction(action) {
 			const bridge = typeof window !== "undefined" ? window[ACTIONS_BRIDGE] : void 0;
@@ -476,7 +514,7 @@ window.__ModuleLoader__.load({
 		function currentMode() {
 			if (typeof window === "undefined") return null;
 			try {
-				const value = new URLSearchParams(window.location.search).get("dsh-desktop-mode");
+				const value = new URLSearchParams(window.location.search).get(MODE_MARKER);
 				return MODE_IDS.includes(value) ? value : null;
 			} catch {
 				return null;
@@ -494,14 +532,34 @@ window.__ModuleLoader__.load({
 			return cause instanceof Error ? cause.message : String(cause);
 		}
 
-		/** Refresh the interface through the Desktop-owned reload action. */
+		/**
+		 * Refresh the interface.
+		 *
+		 * Under the Desktop shell this is the Desktop-owned reload action, which
+		 * re-reads plugins and settings. On a plain browser carrier there is no such
+		 * endpoint, so fall back to reloading the page itself: same observable
+		 * effect (a fresh renderer boot) through the only mechanism the carrier has.
+		 * `location.reload()` never returns, so nothing after it is reachable.
+		 */
 		async function refreshInterface() {
 			notify(text("reloading"));
+			if (!hasDesktopHost()) {
+				if (typeof window !== "undefined") window.location.reload();
+				return;
+			}
 			await desktopAction("reload");
 		}
 
-		/** Relaunch DSH Desktop through the Desktop-owned restart action. */
+		/**
+		 * Relaunch DSH Desktop through the Desktop-owned restart action.
+		 *
+		 * Desktop-only by nature: a browser carrier has no application to relaunch,
+		 * and the row that binds this shortcut is hidden there. The guard keeps a
+		 * stale binding (or a programmatic call) from firing a request at an
+		 * endpoint the carrier does not serve.
+		 */
 		async function restartApplication() {
+			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
 			notify(text("restarting"));
 			await desktopAction("restart");
 		}
@@ -519,7 +577,8 @@ window.__ModuleLoader__.load({
 		 * @param mode - target mode.
 		 */
 		async function switchMode(scope, mode) {
-			if (scope === void 0 || scope === null) throw new Error("settings scope unavailable");
+			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
+			if (scope === void 0 || scope === null) throw new Error(text("scopeUnavailable"));
 			if (mode !== "compatibility") {
 				await scope.set("networkExposure", "loopback");
 				await scope.set("openBrowser", false);
@@ -599,6 +658,12 @@ window.__ModuleLoader__.load({
 			const [problem, setProblem] = React.useState(null);
 			const mode = currentMode();
 			const modeLabel = mode === null ? null : t("mode" + mode.charAt(0).toUpperCase() + mode.slice(1));
+			/*
+			 * The Desktop-only rows are decided per render, not once at activation:
+			 * the same bundle is served to both carriers, so which rows exist is a
+			 * property of the page, and the page can outlive an activation.
+			 */
+			const desktop = hasDesktopHost();
 
 			/*
 			 * Stand the global listener down while this page captures a combination.
@@ -657,7 +722,7 @@ window.__ModuleLoader__.load({
 
 			const header = modeLabel === null ? t("actionSection") : t("actionSection") + " · " + t("current") + ": " + modeLabel;
 			return React.createElement("div", { className: "dshk-page" }, [
-				React.createElement("p", { className: "dshk-intro", key: "intro" }, t("intro")),
+				React.createElement("p", { className: "dshk-intro", key: "intro" }, desktop ? t("intro") : t("introWeb")),
 				React.createElement("div", { className: "dshk-card", key: "enable" }, React.createElement("div", { className: "dshk-row" }, [
 					React.createElement("div", { className: "dshk-rowCopy", key: "c" }, [
 						React.createElement("div", { className: "dshk-rowLabel", key: "l" }, t("enable")),
@@ -681,7 +746,7 @@ window.__ModuleLoader__.load({
 						onRecord: () => record("refresh", config.refresh),
 						onClear: () => clear("refresh"),
 					}),
-					React.createElement(ShortcutRow, {
+					desktop ? React.createElement(ShortcutRow, {
 						key: "restart",
 						t,
 						label: t("restart"),
@@ -689,9 +754,9 @@ window.__ModuleLoader__.load({
 						recording: recording !== null && recording.kind === "restart",
 						onRecord: () => record("restart", config.restart),
 						onClear: () => clear("restart"),
-					}),
+					}) : null,
 				]),
-				React.createElement("div", { className: "dshk-card", key: "modes" }, [
+				desktop ? React.createElement("div", { className: "dshk-card", key: "modes" }, [
 					React.createElement("h4", { key: "h" }, t("modeSection")),
 					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("modeHint")),
 					...MODE_IDS.map((id) => React.createElement(ShortcutRow, {
@@ -704,7 +769,8 @@ window.__ModuleLoader__.load({
 						onRecord: () => record("mode", config.modes[id], id),
 						onClear: () => clear("mode", id),
 					})),
-				]),
+				]) : null,
+				desktop ? null : React.createElement("div", { className: "dshk-hint dshk-platformNote", key: "platform" }, t("webCarrierNote")),
 				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
 				React.createElement("div", { className: "dshk-card", key: "reset" }, React.createElement("button", {
 					type: "button",
@@ -1526,11 +1592,18 @@ window.__ModuleLoader__.load({
 			/*
 			 * The Desktop settings scope is bound ONCE here so its disposer belongs to this
 			 * plugin's fiber; binding per keystroke would leak a scope on every shortcut.
+			 *
+			 * Bound only when the Desktop shell is carrying this page: `dsh-desktop` is a
+			 * Desktop-owned namespace, and a browser carrier serves no settings row for it.
+			 * `switchMode` refuses without a scope, so the failure stays local to the
+			 * Desktop-only action instead of breaking activation.
 			 */
 			let modeScope;
-			ctx.inject(["settingsScope"], (scope) => {
-				modeScope = scope.settingsScope.bind({ namespace: DESKTOP_NS });
-			});
+			if (hasDesktopHost()) {
+				ctx.inject(["settingsScope"], (scope) => {
+					modeScope = scope.settingsScope.bind({ namespace: DESKTOP_NS });
+				});
+			}
 
 			/*
 			 * The sessions service (list snapshot store + session verbs), bound once so
@@ -1572,12 +1645,20 @@ window.__ModuleLoader__.load({
 						refreshInterface().catch((cause) => notify(text("actionFailed") + describe(cause)));
 						return;
 					}
+					/*
+					 * Restart and the mode switches are Desktop-only. Their rows are
+					 * hidden on a browser carrier, but a binding recorded earlier (or
+					 * synced from another profile) can still match, so the actions
+					 * themselves refuse rather than firing at an absent endpoint.
+					 */
 					if (combo === config.restart) {
+						if (!hasDesktopHost()) return;
 						event.preventDefault();
 						event.stopPropagation();
 						restartApplication().catch((cause) => notify(text("actionFailed") + describe(cause)));
 						return;
 					}
+					if (!hasDesktopHost()) return;
 					for (const mode of MODE_IDS) {
 						if (combo !== config.modes[mode]) continue;
 						if (currentMode() === mode) return;
