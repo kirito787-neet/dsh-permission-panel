@@ -54,8 +54,10 @@ DSH 快捷键工具包 + 输入框模型搜索 + 工作区权限面板。同一�
 
 ```bash
 # 1) 从本地源码目录安装（开发用，改完即生效）
+dsh plugin --profile web add "link:H:/Github/dsh-hotkey-toolkit"
+
+# Desktop 载体请用 DSH Desktop 自带的 dsh（普通 dsh 会拒绝 desktop profile）
 dsh plugin --profile desktop add "link:H:/Github/dsh-hotkey-toolkit"
-dsh plugin --profile web     add "link:H:/Github/dsh-hotkey-toolkit"
 
 # 2) 从 tarball 安装（不带源码，最干净）
 npm pack                                  # 生成 dsh-hotkey-toolkit-1.4.0.tgz
@@ -65,7 +67,9 @@ dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.4.0.tgz"
 dsh plugin --profile web add dsh-hotkey-toolkit
 ```
 
-- 换 `--profile <名字>` 即可装到任意 profile（`desktop`、`web`、或你自建的配置）；不指定时用默认 profile。
+- **`--profile` 是必填项**，没有默认 profile；`web` 也有别名：`dsh web`。
+- **`--profile desktop` 只被 DSH Desktop 自带的 `dsh` 接受**：普通 `@deepseek-ai/dsh` 会直接报 `profile "desktop" is managed exclusively by the Electron application`。装 desktop 载体请用应用内那条 `dsh`（或直接在应用里装）。
+- 换 `--profile <名字>` 即可装到任意 profile（`web`、`rescue`、或你自建的配置）。
 - 相对路径（`.`、`../dsh-hotkey-toolkit`）会被**按你当前所在目录**锚定，不会误装成 profile 自身，但显式写绝对路径最不容易出错。
 - 卸载：`dsh plugin --profile web remove dsh-hotkey-toolkit`（会同时从 `dsh.profile.bundles` 摘掉）。
 - 安装后重启对应的 DSH（Desktop 直接重启应用；Web 重新启动 `dsh web`）即可在 `设置 → 插件` 看到「快捷键工具包」与「工作区权限」两页。
