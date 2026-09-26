@@ -164,13 +164,7 @@ function loadPlugin({ bridge, search, omit = [] }) {
   const scopeFor = (names) => {
     const scope = { effect: runEffect };
     if (names.includes("configForms")) Object.assign(scope, configForms);
-    if (names.includes("modelDirectories")) {
-      Object.assign(scope, {
-        // Must never be called during activation; the seat resolves it lazily.
-        modelDirectories: { directoryFor: () => { throw new Error("directoryFor must not be called during activation"); } },
-        sessions: sessionsService, slots: slotsService,
-      });
-    } else if (names.includes("sessions")) Object.assign(scope, { sessions: sessionsService });
+    if (names.includes("sessions")) Object.assign(scope, { sessions: sessionsService });
     if (names.includes("shortcuts")) Object.assign(scope, { shortcuts: shortcutsService });
     if (names.includes("slots")) Object.assign(scope, { slots: slotsService });
     if (names.includes("workspaces")) Object.assign(scope, { workspaces: workspacesService });
@@ -376,14 +370,25 @@ const EXPECTED_COMMANDS = [
   if (web.reloads.length !== 1) throw new Error("web: Refresh did not reload the page (reloads=" + web.reloads.length + ")");
   if (web.fetches.length !== 0) throw new Error("web: Refresh posted to a Desktop endpoint that does not exist; saw " + JSON.stringify(web.fetches.map((call) => call.url)));
 
-  // ---- carrier A: the settings page reflects the new, smaller surface ----
+  // ---- carrier A: the settings page reflects the smaller surface ----
   const webTree = renderSettings(web);
   const webSwitches = switchLabels(webTree);
-  if (!webSwitches.includes("modelSearch")) {
-    throw new Error("web: the model-search sub-plugin switch is missing; saw " + JSON.stringify(webSwitches));
+  /*
+   * The model-search sub-plugin switch used to be asserted here. It moved to
+   * `dsh-client-ui-effort-slider` together with the seat it drove, so what this
+   * page must now show is the pointer to where it went — and it must NOT offer a
+   * second control for it, which would be a switch with nothing behind it.
+   */
+  if (webSwitches.includes("modelSearch")) {
+    throw new Error("web: the settings page still renders a model-search switch; that control lives in "
+      + "dsh-client-ui-effort-slider now. Saw " + JSON.stringify(webSwitches));
+  }
+  const webText = explain(webTree);
+  if (!webText.includes("subpluginMoved")) {
+    throw new Error("web: the sub-plugins card does not point at the plugin that owns the model search box; "
+      + "a user who upgraded has no way to find the switch");
   }
   // The old recorder is gone: no recording/enable rows must reappear.
-  const webText = explain(webTree);
   for (const stale of ["enable", "record", "reset"]) {
     if (webText.includes(stale)) throw new Error("web: the retired shortcut recorder still renders '" + stale + "'");
   }
@@ -483,7 +488,7 @@ const EXPECTED_COMMANDS = [
   }
 
   // ---- dictionary parity: both locales must carry the same keys ----
-  for (const ns of ["hotkeyToolkit", "hotkeyToolkit.seat"]) {
+  for (const ns of ["hotkeyToolkit"]) {
     const dict = registeredDictionaries.get(ns);
     if (dict === undefined) throw new Error("dictionary " + ns + " was never registered");
     const zhKeys = Object.keys(dict.zh).sort();
@@ -498,7 +503,7 @@ const EXPECTED_COMMANDS = [
 
   console.log(
     "platform ok: web commands=" + web.commands.size + " no-keydown-listener=1"
-    + " desktop-bound-scope=1 detection=[bridge,marker] locale-parity=2"
+    + " desktop-bound-scope=1 detection=[bridge,marker] locale-parity=1"
     + " web-defaults=0 refresh-unbound=1"
     + " soft-workspaces=1",
   );

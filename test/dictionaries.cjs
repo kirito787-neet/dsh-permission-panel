@@ -7,11 +7,15 @@
  * silently shows the other's string.
  *
  * So this suite asserts three things about the real client.js:
- *   1. `zh` and `en` carry identical key sets, and so do `seatZh`/`seatEn`;
+ *   1. `zh` and `en` carry identical key sets;
  *   2. every key the code looks up at runtime actually exists;
  *   3. every key the shortcut commands use for their official-list labels exists
  *      (these are built dynamically, so a typo would otherwise only surface as a
  *      raw key inside 设置 → 快捷键).
+ *
+ * The seat's own namespace (`hotkeyToolkit.seat`) used to be checked here as
+ * well. The searchable model seat moved to `dsh-client-ui-effort-slider` and took
+ * its dictionary with it, so that namespace no longer exists in this plugin.
  *
  * Usage: node test/dictionaries.cjs [path/to/client.js]
  */
@@ -39,26 +43,21 @@ const grabObject = (name) => {
 
 const zh = grabObject("zh");
 const en = grabObject("en");
-const seatZh = grabObject("seatZh");
-const seatEn = grabObject("seatEn");
 
 // ---- 1. key-set parity between locales ----
-for (const [left, right, leftName, rightName] of [
-  [zh, en, "zh", "en"],
-  [seatZh, seatEn, "seatZh", "seatEn"],
-]) {
-  const a = Object.keys(left).sort();
-  const b = Object.keys(right).sort();
+{
+  const a = Object.keys(zh).sort();
+  const b = Object.keys(en).sort();
   if (a.join(",") !== b.join(",")) {
     const onlyA = a.filter((key) => !b.includes(key));
     const onlyB = b.filter((key) => !a.includes(key));
-    throw new Error(leftName + "/" + rightName + " key sets differ ("
-      + leftName + "-only=" + JSON.stringify(onlyA) + " " + rightName + "-only=" + JSON.stringify(onlyB) + ")");
+    throw new Error("zh/en key sets differ (zh-only=" + JSON.stringify(onlyA)
+      + " en-only=" + JSON.stringify(onlyB) + ")");
   }
-  if (a.length === 0) throw new Error(leftName + " is empty");
+  if (a.length === 0) throw new Error("zh is empty");
 }
 
-const known = new Set([...Object.keys(zh), ...Object.keys(seatZh)]);
+const known = new Set(Object.keys(zh));
 
 // ---- 2. every literal t("key") / text("key") lookup exists ----
 // Only genuine dictionary lookups: `t(...)` / `text(...)` calls whose argument is
@@ -93,7 +92,6 @@ if (missingLabels.length > 0) {
 
 console.log(
   "dictionaries ok: zh/en parity=" + Object.keys(zh).length
-  + " seat parity=" + Object.keys(seatZh).length
   + " lookups=" + used.size
   + " shortcut-labels=" + labelKeys.size,
 );

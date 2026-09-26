@@ -72,9 +72,7 @@ window.__ModuleLoader__.load({
 			actionFailed: "操作失败：",
 			noShortcut: "快捷键未绑定或不可用。",
 			subpluginSection: "子插件",
-			modelSearch: "模型搜索",
-			modelSearchHint: "在模型列表里提供搜索框（保留原版两级菜单）。关闭后恢复官方原生模型菜单。",
-			modelSearchOff: "已关闭：正在使用官方原生模型菜单。",
+			subpluginMoved: "模型搜索搜索框已迁移到「Claude 风格推理滑块」插件，请在那边开关（设置 → 插件）。本插件不再占用输入框的模型席位。",
 			desktopOnly: "该操作仅在 DSH Desktop 中可用。",
 			scopeUnavailable: "设置作用域不可用。",
 			webCarrierNote: "当前运行在浏览器（Web）载体中：重启 DSH 与窗口模式切换仅在 DSH Desktop 中可用，因此在官方快捷键列表里默认不绑定。",
@@ -151,9 +149,7 @@ window.__ModuleLoader__.load({
 			actionFailed: "Operation failed: ",
 			noShortcut: "The shortcut is unbound or unavailable.",
 			subpluginSection: "Sub-plugins",
-			modelSearch: "Model search",
-			modelSearchHint: "Adds a search box to the model list (keeping the shipped two-level menu). Turn it off to restore the official model menu.",
-			modelSearchOff: "Off — the official model menu is in use.",
+			subpluginMoved: "The model-search box moved to the \"Claude-style reasoning slider\" plugin — toggle it there (Settings → Plugins). This plugin no longer takes over the composer's model cell.",
 			desktopOnly: "This action is only available in DSH Desktop.",
 			scopeUnavailable: "Settings scope unavailable.",
 			webCarrierNote: "Running on the browser (Web) carrier: Restart DSH and the window-mode switches exist only in DSH Desktop, so they ship unbound in the official shortcut list.",
@@ -224,44 +220,9 @@ window.__ModuleLoader__.load({
 			".dshk-note{margin-top:10px;color:var(--dsw-alias-state-warn-label,#e0a03b);font-size:11px;line-height:1.5}",
 			".dshk-platformNote{margin:-2px 0 12px;font-size:11px;line-height:1.6}",
 			".dshk-toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:2147483003;padding:9px 16px;border-radius:10px;background:var(--dsw-specific-menu,#26282d);color:var(--dsw-alias-label-primary,#e8eaee);box-shadow:var(--dsw-elevation-prominent,0 10px 32px rgba(0,0,0,.35));border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.24));font-size:12px;line-height:18px;pointer-events:none;max-width:min(420px,90vw);text-align:center}",
-			".dshk-root{min-width:0;position:relative}",
-			".dshk-trigger{min-width:0;max-width:min(360px,45cqw);height:28px;color:var(--dsw-alias-label-secondary,#c8ccd4);cursor:pointer;background:0 0;border:none;border-radius:24px;outline:none;align-items:center;gap:4px;padding:0 4px 0 8px;font-size:13px;font-weight:500;line-height:20px;display:flex}",
-			".dshk-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}",
-			".dshk-trigger:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3,rgba(128,128,128,.45))}",
-			".dshk-trigger:disabled{color:var(--dsw-alias-label-dimmed,#7b828c);cursor:default}",
-			".dshk-triggerLabel{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}",
-			".dshk-triggerEffort{text-overflow:ellipsis;white-space:nowrap;min-width:0;color:var(--dsw-alias-label-caption,#9aa0aa);flex-shrink:1000;overflow:hidden}",
-			".dshk-triggerIcon{flex:none;display:none}",
-			"@container (width<=360px){.dshk-triggerIcon{display:block}.dshk-triggerLabel,.dshk-triggerEffort{display:none}}",
+			/* Shared by the permissions panel's preset dropdown (its own chevron). */
 			".dshk-chevron{color:var(--dsw-alias-label-caption,#9aa0aa);flex:none;transition:transform .12s}",
 			".dshk-chevronOpen{transform:rotate(180deg)}",
-			".dshk-menu{z-index:1100;background:var(--dsw-specific-menu,#26282d);width:max-content;min-width:min(240px,100vw - 32px);max-width:min(420px,100vw - 32px);max-height:min(360px,100vh - 96px);box-shadow:var(--dsw-elevation-prominent,0 10px 32px rgba(0,0,0,.35));color:var(--dsw-alias-label-primary,#e8eaee);border:0;border-radius:20px;flex-direction:column;padding:4px;display:flex;position:fixed;overflow:hidden}",
-			".dshk-statusWhy{margin-top:4px;color:var(--dsw-alias-state-error-primary,#e05a5a);font-size:11px;line-height:16px;word-break:break-all}",
-			".dshk-status,.dshk-empty{color:var(--dsw-alias-label-tertiary,#9aa0aa);padding:10px;font-size:13px;line-height:20px}",
-			".dshk-error{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(224,80,80,.14));color:var(--dsw-alias-state-error-primary,#e05a5a);border-radius:8px;margin-bottom:4px;padding:7px 8px;font-size:12px;line-height:18px}",
-			".dshk-searchWrap{padding:2px 4px 6px;flex:none}",
-			".dshk-search{display:flex;align-items:center;gap:6px;height:32px;padding:0 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08))}",
-			".dshk-search:focus-within{border-color:var(--dsw-alias-border-l3,rgba(128,128,128,.5))}",
-			".dshk-searchIcon{flex:none;color:var(--dsw-alias-label-caption,#9aa0aa)}",
-			".dshk-searchInput{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--dsw-alias-label-primary,#e8eaee);font:inherit;font-size:13px;line-height:20px}",
-			".dshk-searchInput::placeholder{color:var(--dsw-alias-label-dimmed,#7b828c)}",
-			".dshk-searchClear{flex:none;display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--dsw-alias-label-caption,#9aa0aa);cursor:pointer}",
-			".dshk-searchClear:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary,#e8eaee)}",
-			".dshk-groups{min-height:0;overflow-y:auto;--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}",
-			".dshk-group+.dshk-group{margin-top:4px}",
-			".dshk-groupTitle{z-index:1;background:var(--dsw-specific-menu,#26282d);color:var(--dsw-alias-label-tertiary,#9aa0aa);padding:5px 8px 3px;font-size:12px;font-weight:500;line-height:18px;position:sticky;top:0}",
-			".dshk-option{box-sizing:border-box;width:auto;min-width:100%;min-height:38px;color:inherit;text-align:left;cursor:pointer;background:0 0;border:none;border-radius:10px;outline:none;align-items:center;gap:8px;padding:6px 8px;display:flex}",
-			".dshk-option:hover:not(:disabled),.dshk-option:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}",
-			".dshk-option:disabled{color:var(--dsw-alias-label-dimmed,#7b828c);cursor:default}",
-			".dshk-optionCopy{flex-direction:column;flex:1;min-width:0;display:flex}",
-			".dshk-modelName{color:inherit;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500;line-height:20px;overflow:hidden}",
-			".dshk-modelId{color:var(--dsw-alias-label-caption,#9aa0aa);text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:16px;overflow:hidden}",
-			".dshk-check{color:var(--dsw-alias-label-primary,#e8eaee);flex:0 0 18px;place-items:center;display:grid}",
-			".dshk-cell{box-sizing:border-box;width:auto;min-width:100%;height:40px;color:var(--dsw-alias-label-primary,#e8eaee);cursor:pointer;text-align:left;background:0 0;border:none;border-radius:10px;align-items:center;gap:8px;padding:0 10px;font-size:14px;line-height:22px;display:flex}",
-			".dshk-cell:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14))}",
-			".dshk-cellLabel{white-space:nowrap;flex:none}",
-			".dshk-cellValue{text-overflow:ellipsis;white-space:nowrap;text-align:right;min-width:0;color:var(--dsw-alias-label-tertiary,#9aa0aa);flex:auto;overflow:hidden}",
-			".dshk-cellChevron{color:var(--dsw-alias-label-tertiary,#9aa0aa);flex:none}",
 		".dshk-wpHead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}",
 		".dshk-wpRow{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.16))}",
 		".dshk-wpRow:first-of-type{border-top:none}",
@@ -332,9 +293,6 @@ window.__ModuleLoader__.load({
 		 * "what is Ctrl+R bound to".
 		 *
 		 * What this DOES own:
-		 *  - `modelSearch`: the model-selector sub-plugin switch. ON, this plugin
-		 *    shadows the official `conversation.input.model` seat with its searchable
-		 *    menu; OFF, the seat is retired and the official two-level menu returns.
 		 *  - `shortcuts`: one arm/disarm switch PER command this plugin contributes.
 		 *    These are gates on the action, not on the binding: the command stays
 		 *    registered, keeps its keys, and keeps its row in the official dialog —
@@ -342,9 +300,17 @@ window.__ModuleLoader__.load({
 		 *    switch reversible without churning the shortcut registry (every
 		 *    register/unregister invalidates open edit drafts and briefly disables
 		 *    editing) and without ever losing a recorded combination.
+		 *
+		 * The model-search sub-plugin used to live here too. It now ships in
+		 * `dsh-client-ui-effort-slider`, which already owns the same
+		 * `conversation.input.model` cell — the two could never have coexisted.
 		 */
 		const DEFAULT_CONFIG = {
-			modelSearch: true,
+			/*
+			 * A legacy payload may still carry `modelSearch`. normalizeConfig simply
+			 * ignores it, so a profile written before the move upgrades cleanly and the
+			 * slider plugin can read that value once to inherit the user's old choice.
+			 */
 			shortcuts: {
 				refresh: true,
 				restart: true,
@@ -362,14 +328,16 @@ window.__ModuleLoader__.load({
 		 *
 		 * Tolerant by design, for two separate reasons:
 		 *  - the pre-1.5 payload carried `enabled`, `refresh`, `restart`, and `modes`;
-		 *    those fields are simply ignored now, so an existing profile upgrades
-		 *    without losing its model-search choice;
+		 *    those fields are simply ignored now;
 		 *  - `shortcuts` is merged key-by-key, so a payload written before a new
 		 *    switch existed still gets the shipped default for the missing keys
 		 *    rather than inheriting `undefined` (which would read as "off").
+		 *
+		 * `modelSearch` is carried through UNTOUCHED — see the deprecated-passthrough
+		 * note above createConfigStore.
 		 */
 		function normalizeConfig(raw) {
-			const next = { modelSearch: DEFAULT_CONFIG.modelSearch, shortcuts: { ...DEFAULT_CONFIG.shortcuts } };
+			const next = { shortcuts: { ...DEFAULT_CONFIG.shortcuts } };
 			if (raw === null || typeof raw !== "object") return next;
 			if (typeof raw.modelSearch === "boolean") next.modelSearch = raw.modelSearch;
 			if (raw.shortcuts !== null && typeof raw.shortcuts === "object") {
@@ -827,10 +795,13 @@ window.__ModuleLoader__.load({
 		 * two stores, and two disagreeing answers to "what is Ctrl+R bound to". The
 		 * bindings now live in the official shortcut service and are edited in
 		 * 设置 → 快捷键, so this page only owns what is genuinely the plugin's:
-		 * the model-search sub-plugin switch, plus a pointer to the official dialog.
+		 * the per-command switches, plus a pointer to the official dialog.
 		 *
-		 * The sub-plugin switch is read per render, not cached at activation: the same
-		 * bundle serves both carriers and the page can outlive an activation.
+		 * The model-search sub-plugin switch that used to sit here is gone with the
+		 * seat it drove; the card now points at the plugin that owns it.
+		 *
+		 * Switches are read per render, not cached at activation: the same bundle
+		 * serves both carriers and the page can outlive an activation.
 		 */
 		function SettingsSection(props) {
 			const { t } = props;
@@ -881,51 +852,12 @@ window.__ModuleLoader__.load({
 				]),
 				React.createElement("div", { className: "dshk-card", key: "subplugins" }, [
 					React.createElement("h4", { key: "h" }, t("subpluginSection")),
-					React.createElement("div", { className: "dshk-row", key: "modelSearch" }, [
-						React.createElement("div", { className: "dshk-rowCopy", key: "c" }, [
-							React.createElement("div", { className: "dshk-rowLabel", key: "l" }, t("modelSearch")),
-							React.createElement("div", { className: "dshk-rowHint", key: "h" }, t("modelSearchHint")),
-						]),
-						React.createElement("label", { className: "dshk-switch", key: "s" }, React.createElement("input", {
-							type: "checkbox",
-							checked: config.modelSearch,
-							onChange: (event) => configStore.update({ modelSearch: event.target.checked }),
-						})),
-					]),
-					config.modelSearch ? null : React.createElement("div", { className: "dshk-hint", key: "off" }, t("modelSearchOff")),
+					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("subpluginMoved")),
 				]),
 			]);
 		}
 
-		/** Search glyph: keeps the seat free of the primitives package. */
-		function SearchIcon() {
-			return React.createElement("svg", { className: "dshk-searchIcon", width: 14, height: 14, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" }, React.createElement("path", {
-				d: "M7.25 12.5a5.25 5.25 0 1 0 0-10.5 5.25 5.25 0 0 0 0 10.5Zm3.9-1.35 3.1 3.1",
-				stroke: "currentColor",
-				strokeWidth: "1.4",
-				strokeLinecap: "round",
-			}));
-		}
-		/** Clear glyph for the search field. */
-		function ClearIcon() {
-			return React.createElement("svg", { width: 10, height: 10, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" }, React.createElement("path", {
-				d: "M3.5 3.5l9 9m0-9l-9 9",
-				stroke: "currentColor",
-				strokeWidth: "1.6",
-				strokeLinecap: "round",
-			}));
-		}
-		/** Right chevron used by the root pane's drill-in cells. */
-		function ChevronRight() {
-			return React.createElement("svg", { className: "dshk-cellChevron", width: 14, height: 14, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" }, React.createElement("path", {
-				d: "M6 3.5l4.5 4.5L6 12.5",
-				stroke: "currentColor",
-				strokeWidth: "1.4",
-				strokeLinecap: "round",
-				strokeLinejoin: "round",
-			}));
-		}
-		/** Down chevron for the trigger. */
+		/** Down chevron: the permissions panel's preset dropdown trigger. */
 		function ChevronDown(props) {
 			return React.createElement("svg", { className: props.className, width: 14, height: 14, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" }, React.createElement("path", {
 				d: "M4 6.25 8 10.25l4-4",
@@ -935,7 +867,7 @@ window.__ModuleLoader__.load({
 				strokeLinejoin: "round",
 			}));
 		}
-		/** Selected-model check. */
+		/** Check glyph: marks the active preset in the permissions panel. */
 		function CheckIcon() {
 			return React.createElement("svg", { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" }, React.createElement("path", {
 				d: "M3.5 8.5 6.5 11.5 12.5 4.5",
@@ -945,733 +877,6 @@ window.__ModuleLoader__.load({
 				strokeLinejoin: "round",
 			}));
 		}
-		/** Model glyph shown when the trigger collapses to its icon. */
-		function ModelIcon() {
-			return React.createElement("svg", { className: "dshk-triggerIcon", width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true" }, React.createElement("path", {
-				d: "M8 2.5 14 6v4.5L8 14 2 10.5V6l6-3.5Z",
-				stroke: "currentColor",
-				strokeWidth: "1.3",
-				strokeLinejoin: "round",
-			}));
-		}
-
-		/** Case-insensitive substring test over the fields a user may search by. */
-		function matchesQuery(model, group, needle) {
-			if (needle === "") return true;
-			if (String(model.name).toLowerCase().includes(needle)) return true;
-			if (String(model.id).toLowerCase().includes(needle)) return true;
-			if (String(group.name).toLowerCase().includes(needle)) return true;
-			if (String(group.id).toLowerCase().includes(needle)) return true;
-			return false;
-		}
-
-		/*
-		 * What the seat reads before its per-session directory is resolvable. The status
-		 * is "loading" on purpose: the model pane only paints a row for "loading"/"ready"
-		 * and an "idle" status would render the search box above an empty list.
-		 *
-		 * Frozen and shared: React re-reads getSnapshot every render and only bails out
-		 * when the value is cached, so a fresh object literal would crash the seat.
-		 */
-		const LOADING_SEAT_SNAPSHOT = Object.freeze({ current: null, status: "loading", error: null, groups: [], failures: [] });
-		/*
-		 * Last failures seen while building the seat face, parked on a global so a
-		 * user can read them back with `window.__dshHotkeySeat`. Degrading quietly is
-		 * right for the UI, but it must not hide the cause from a bug report.
-		 */
-		const SEAT_DIAGNOSTICS = [];
-		const SEAT_DIAG_KEY = "dsh.hotkeyToolkit.seatDiag";
-		const recordSeatStep = (where, message) => {
-			try {
-				SEAT_DIAGNOSTICS.push({ at: Date.now(), where, message });
-				if (SEAT_DIAGNOSTICS.length > 30) SEAT_DIAGNOSTICS.shift();
-				if (typeof window !== "undefined") window.__dshHotkeySeat = { failures: SEAT_DIAGNOSTICS };
-				window.localStorage.setItem(SEAT_DIAG_KEY, JSON.stringify(SEAT_DIAGNOSTICS));
-			} catch {
-				/* diagnostics must never break the seat */
-			}
-		};
-		const reportSeatFailure = (where, error) => recordSeatStep(where, String(error && error.message ? error.message : error));
-		/** Compact description of a directory snapshot, for diagnostics. */
-		const summarizeSeatSnapshot = (snap) => {
-			if (snap === null || snap === void 0) return "no-snapshot";
-			return [
-				"status=" + String(snap.status),
-				"groups=" + (Array.isArray(snap.groups) ? snap.groups.length : "non-array"),
-				"failures=" + (Array.isArray(snap.failures) ? snap.failures.length : "non-array"),
-				"current=" + (snap.current === null || snap.current === void 0 ? "null" : "set"),
-				"error=" + (snap.error === null || snap.error === void 0 ? "null" : String(snap.error)),
-			].join(" ");
-		};
-		/** One-line summary of the most recent failure, for the loading row. */
-		const lastSeatFailure = () => {
-			const last = SEAT_DIAGNOSTICS[SEAT_DIAGNOSTICS.length - 1];
-			return last === void 0 ? "" : last.where + ": " + last.message;
-		};
-		/*
-		 * Resolve the per-session directory on demand instead of up front.
-		 *
-		 * `modelDirectories.directoryFor()` throws while a session's scope/binding is
-		 * still unresolved (cold boot, session restore), and an injected face is computed
-		 * ONCE per binding — so resolving eagerly pins an empty directory for the rest of
-		 * the session and the menu opens with no rows. This proxy resolves on first
-		 * subscription (and again on every open, via load()), reports a loading snapshot
-		 * until it can, then notifies React so the real store takes over.
-		 */
-		function createLazyDirectory(resolveDirectory) {
-			let directory = null;
-			let innerUnsubscribe = null;
-			let preloaded = false;
-			let warmPending = false;
-			let retryTimer = null;
-			let retryAttempts = 0;
-			let exhaustedSnapshot = null;
-			const listeners = new Set();
-			const notify = () => {
-				for (const listener of [...listeners]) {
-					try {
-						listener();
-					} catch {
-						/* a broken listener is not the seat's problem */
-					}
-				}
-			};
-			/*
-			 * Fetch the catalog once a directory exists. Safe to call repeatedly:
-			 * `preloaded` makes it a one-shot per directory.
-			 */
-			const warm = () => {
-				const current = directory;
-				if (current === null || preloaded) return;
-				preloaded = true;
-				recordSeatStep("warm", "start");
-				/*
-				 * A failed warm-up must not latch: leaving `preloaded` set would make this a
-				 * permanent one-shot, so a later open would never retry and the menu would sit
-				 * on its loading row forever.
-				 */
-				const giveUp = (error) => {
-					preloaded = false;
-					reportSeatFailure("directory.load", error);
-					/*
-					 * Retry on our own rather than waiting for React to resubscribe: a
-					 * transient failure would otherwise leave the trigger on its loading label
-					 * until the user opened the menu and paid the round-trip.
-					 */
-					scheduleRetry();
-				};
-				try {
-					const started = current.load();
-					if (started !== void 0 && started !== null && typeof started.then === "function") {
-						started.then(() => {
-							recordSeatStep("warm", "ok");
-							const snap = directory === null || directory.store === void 0 ? null : directory.store.getSnapshot();
-							recordSeatStep("store@load", summarizeSeatSnapshot(snap));
-							/*
-							 * The catalog may still be in flight when load() resolves, so look again
-							 * once more: a store that never leaves "loading" is the endless spinner,
-							 * and this is the line that says whether the request or the projection
-							 * behind it is what stalled.
-							 */
-							if (typeof setTimeout === "function") {
-								setTimeout(() => {
-									const later = directory === null || directory.store === void 0 ? null : directory.store.getSnapshot();
-									recordSeatStep("store@3s", summarizeSeatSnapshot(later));
-								}, 3000);
-							}
-						}, giveUp);
-					}
-				} catch (error) {
-					giveUp(error);
-				}
-			};
-			/*
-			 * A session binds some time AFTER the composer mounts and nothing notifies the
-			 * seat, so poll briefly until the directory resolves. Without this the catalog
-			 * is only fetched when the user opens the menu - the round-trip they would
-			 * otherwise wait through. Bounded: gives up after ~10s and is cleared on success.
-			 */
-			const scheduleRetry = () => {
-				if (retryTimer !== null) return;
-				if (typeof setInterval !== "function") return;
-				retryTimer = setInterval(() => {
-					retryAttempts += 1;
-					resolve();
-					warm();
-					/*
-					 * Stop once the catalog is actually in flight/settled. `preloaded` is true
-					 * exactly while a load is outstanding or succeeded.
-					 */
-					if (preloaded || retryAttempts >= 40) {
-						clearInterval(retryTimer);
-						retryTimer = null;
-						/*
-						 * Budget spent and the session never resolved: say so instead of leaving the
-						 * menu on a loading row that never ends.
-						 */
-						if (!preloaded && directory === null) {
-							/*
-							 * Freeze the reason once: getSnapshot must return a cached value or React
-							 * treats every render as a change and loops until it crashes the seat.
-							 */
-							const why = lastSeatFailure() || "session never resolved";
-							recordSeatStep("give-up", why);
-							exhaustedSnapshot = Object.freeze({ current: null, status: "error", error: why, groups: [], failures: [] });
-							notify();
-						}
-					}
-				}, 250);
-			};
-			const resolve = () => {
-				if (directory !== null) return directory;
-				let next;
-				try {
-					next = resolveDirectory();
-				} catch (error) {
-					reportSeatFailure("modelDirectories.directoryFor", error);
-					/*
-					 * The session is not bound yet. Remember that a warm-up is still owed so
-					 * a later nudge (retryWarmUp) can perform it - otherwise the very first
-					 * open pays the full Host round-trip.
-					 */
-					warmPending = !preloaded;
-					scheduleRetry();
-					return null;
-				}
-				if (next === null || next === void 0) return null;
-				directory = next;
-				recordSeatStep("resolved", "ok");
-				if (next.store !== void 0 && next.store !== null && typeof next.store.subscribe === "function") {
-					innerUnsubscribe = next.store.subscribe(notify);
-				}
-				notify();
-				if (warmPending) {
-					warmPending = false;
-					warm();
-				}
-				return directory;
-			};
-			return {
-				store: {
-					subscribe: (listener) => {
-						listeners.add(listener);
-						/*
-						 * Warm the catalog as soon as the seat mounts. The composer mounts long before
-						 * anyone opens the menu, so preloading here is what lets the list appear at
-						 * once instead of after a Host round-trip on the first open.
-						 */
-						resolve();
-						warm();
-						return () => {
-							listeners.delete(listener);
-							if (listeners.size === 0 && innerUnsubscribe !== null) {
-								try {
-									innerUnsubscribe();
-								} catch {
-									/* the inner store may already be gone */
-								}
-								innerUnsubscribe = null;
-							}
-						};
-					},
-					getSnapshot: () => {
-						const current = directory;
-						if (current !== null && current.store !== void 0 && current.store !== null && typeof current.store.getSnapshot === "function") {
-							return current.store.getSnapshot();
-						}
-						return exhaustedSnapshot === null ? LOADING_SEAT_SNAPSHOT : exhaustedSnapshot;
-					},
-				},
-				load: () => {
-					const current = resolve();
-					if (current !== null && typeof current.load === "function") {
-						try {
-							current.load();
-						} catch (error) {
-							reportSeatFailure("directory.load", error);
-						}
-					}
-				},
-				select: (selection) => {
-					const current = resolve();
-					if (current === null || typeof current.select !== "function") return Promise.resolve(false);
-					return current.select(selection).then(() => true, () => false);
-				},
-				/*
-				 * Called when the session may have become resolvable (the sessions list
-				 * changed). Retries a warm-up that the cold start had to skip.
-				 */
-				retryWarmUp: () => {
-					resolve();
-					warm();
-				},
-			};
-		}
-		/**
-		 * The composer's model seat: the official two-level menu, kept exactly as
-		 * shipped - the root level holds the Model / Effort rows and each drills into
-		 * its own list - with the model list additionally carrying a search field.
-		 *
-		 * The field lives in the MODEL pane, directly above the provider-grouped
-		 * options it filters, so the level the user searches on is the level that
-		 * shows the results. Opening the menu therefore lands on the root rows, and
-		 * "Model" drills into the searchable list.
-		 *
-		 * Registered at a LOWER priority than the shipped seat, so this renders while
-		 * the plugin is live and the official seat returns untouched on unload or on any
-		 * crash that abdicates this entry. The injected face is the official one (the
-		 * shared per-session ModelDirectory store and verbs), which is what keeps this
-		 * seat and the /model popup reading one state.
-		 */
-		function ModelSelect(props) {
-			const { locked, available, directory, load, select, t } = props;
-			const rawState = React.useSyncExternalStore((fn) => directory.subscribe(fn), () => directory.getSnapshot());
-			/*
-			 * A render crash RETIRES this seat: the slot runtime abdicates a shadowing
-			 * entry on the first render error, which hands the composer back to the
-			 * shipped two-level menu and silently drops the search box. Normalize every
-			 * field the render reads so a partial store snapshot degrades instead of
-			 * throwing.
-			 */
-			const state = React.useMemo(() => {
-				if (rawState !== null && rawState !== void 0 && Array.isArray(rawState.groups) && Array.isArray(rawState.failures)) return rawState;
-				return {
-					current: rawState?.current ?? null,
-					status: rawState?.status ?? "idle",
-					error: rawState?.error ?? null,
-					groups: Array.isArray(rawState?.groups) ? rawState.groups : [],
-					failures: Array.isArray(rawState?.failures) ? rawState.failures : [],
-				};
-			}, [rawState]);
-			const [open, setOpen] = React.useState(false);
-			const [pane, setPane] = React.useState("root");
-			const [query, setQuery] = React.useState("");
-			const [menuPos, setMenuPos] = React.useState(null);
-			const [failure, setFailure] = React.useState(null);
-			const rootRef = React.useRef(null);
-			const triggerRef = React.useRef(null);
-			const menuRef = React.useRef(null);
-			const searchRef = React.useRef(null);
-			const itemRefs = React.useRef([]);
-			const id = React.useId();
-
-			const choices = React.useMemo(() => state.groups.flatMap((group) => group.models.map((model) => ({
-				group,
-				model,
-				selection: {
-					provider: group.id,
-					model: model.id,
-					...(model.reasoning?.defaultEffort === void 0 ? {} : { reasoningEffort: model.reasoning.defaultEffort }),
-				},
-			}))), [state.groups]);
-			const currentIndex = state.current === null ? -1 : choices.findIndex((c) => c.selection.provider === state.current.provider && c.selection.model === state.current.model);
-			const currentChoice = choices[currentIndex];
-			const rawReasoning = currentChoice?.model.reasoning;
-			const reasoning = rawReasoning === void 0 || rawReasoning === null ? void 0 : (Array.isArray(rawReasoning.efforts) ? rawReasoning : { ...rawReasoning, efforts: [] });
-			const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort;
-			const effortLabel = reasoning === void 0 ? void 0 : effectiveEffort === void 0 ? t("effort.providerDefault") : (reasoning.efforts.find((level) => level.id === effectiveEffort)?.name ?? effectiveEffort);
-			const effortChoices = React.useMemo(() => reasoning === void 0 ? [] : [
-				...(reasoning.defaultEffort === void 0 ? [{ key: "provider-default", effort: void 0, label: t("effort.providerDefault") }] : []),
-				...reasoning.efforts.map((effort) => ({ key: "effort:" + effort.id, effort: effort.id, label: effort.name })),
-			], [reasoning, t]);
-			const busy = state.status === "selecting";
-
-			const needle = query.trim().toLowerCase();
-			/*
-			 * Provider groups narrowed to the models that MATCH. The narrowed list has to
-			 * survive the fold: returning the group itself would list every sibling the user
-			 * just filtered out.
-			 */
-			const filtered = React.useMemo(() => {
-				if (needle === "") return state.groups.map((group) => ({ group, models: group.models }));
-				return state.groups.map((group) => ({
-					group,
-					models: group.models.filter((model) => matchesQuery(model, group, needle)),
-				})).filter((entry) => entry.models.length > 0);
-			}, [state.groups, needle]);
-			const flatFiltered = React.useMemo(() => filtered.flatMap((entry) => entry.models.map((model) => ({ group: entry.group, model }))), [filtered]);
-
-			React.useEffect(() => {
-				if (!open) return;
-				const closeOutside = (event) => {
-					if (rootRef.current?.contains(event.target) === true) return;
-					if (menuRef.current?.contains(event.target) === true) return;
-					setOpen(false);
-				};
-				document.addEventListener("mousedown", closeOutside);
-				return () => {
-					document.removeEventListener("mousedown", closeOutside);
-				};
-			}, [open]);
-			React.useLayoutEffect(() => {
-				if (!open) {
-					setMenuPos(null);
-					return;
-				}
-				const place = () => {
-					const rect = triggerRef.current?.getBoundingClientRect();
-					if (rect === void 0) return;
-					const MARGIN = 12;
-					const lw = menuRef.current?.offsetWidth ?? 0;
-					const lh = menuRef.current?.offsetHeight ?? 0;
-					let x = rect.right - lw;
-					let y = rect.top - 8 - lh;
-					if (lw > 0) x = Math.min(Math.max(x, MARGIN), window.innerWidth - lw - MARGIN);
-					if (lh > 0) y = Math.min(Math.max(y, MARGIN), window.innerHeight - lh - MARGIN);
-					setMenuPos({ left: x, top: y });
-				};
-				place();
-				window.addEventListener("scroll", place, true);
-				window.addEventListener("resize", place);
-				return () => {
-					window.removeEventListener("scroll", place, true);
-					window.removeEventListener("resize", place);
-				};
-			}, [open, pane, state, query]);
-			React.useEffect(() => {
-				if (!open || pane !== "model" || menuPos === null) return;
-				/*
-				 * The search field is the point of this pane, so it takes focus as soon
-				 * as the model list is on screen - but only once its position has been
-				 * measured, and never while the field is already focused (a fresh focus()
-				 * on every render would fight the user's selection).
-				 */
-				if (document.activeElement !== searchRef.current) searchRef.current?.focus();
-			}, [open, pane, menuPos]);
-
-			if (!available) return null;
-
-			const show = () => {
-				setPane("root");
-				setQuery("");
-				setFailure(null);
-				setOpen(true);
-				load();
-			};
-			const close = (restoreFocus = false) => {
-				setOpen(false);
-				setPane("root");
-				setQuery("");
-				if (restoreFocus) queueMicrotask(() => {
-					triggerRef.current?.focus();
-				});
-			};
-			const moveFocus = (offset) => {
-				const items = itemRefs.current.filter((item) => item !== null && item !== void 0);
-				if (items.length === 0) return;
-				const active = items.findIndex((item) => item === document.activeElement);
-				items[(Math.max(active, 0) + offset + items.length) % items.length]?.focus();
-			};
-			const onRootKeyDown = (event) => {
-				if (event.key === "Escape" && open) {
-					event.preventDefault();
-					if (query !== "") {
-						setQuery("");
-					} else if (pane !== "root") {
-						setPane("root");
-					} else close(true);
-					return;
-				}
-				if (!open) return;
-				if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-					if (pane === "model" && document.activeElement === searchRef.current) return;
-					event.preventDefault();
-					moveFocus(event.key === "ArrowDown" ? 1 : -1);
-				}
-			};
-			const onBlur = (event) => {
-				if (event.relatedTarget instanceof Node && (rootRef.current?.contains(event.relatedTarget) === true || menuRef.current?.contains(event.relatedTarget) === true)) return;
-				close();
-			};
-			const settle = (accepted) => {
-				if (accepted) {
-					if (rootRef.current !== null) close(true);
-					return;
-				}
-				setFailure(directory.getSnapshot().error ?? t("retry"));
-			};
-			const choose = (selection) => {
-				if (state.current?.provider === selection.provider && state.current.model === selection.model && selection.reasoningEffort === void 0) {
-					close(true);
-					return;
-				}
-				setFailure(null);
-				select(selection).then(settle, () => setFailure(directory.getSnapshot().error ?? t("retry")));
-			};
-			const chooseEffort = (effort) => {
-				if (state.current === null) return;
-				if (effectiveEffort === effort) {
-					close(true);
-					return;
-				}
-				const selection = {
-					provider: state.current.provider,
-					model: state.current.model,
-					...(effort === void 0 ? {} : { reasoningEffort: effort }),
-				};
-				setFailure(null);
-				select(selection).then(settle, () => setFailure(directory.getSnapshot().error ?? t("retry")));
-			};
-
-			const waiting = state.current === null && state.status === "loading";
-			const modelLabel = waiting ? t("trigger.loading") : (currentChoice?.model.name ?? (state.current === null ? t("trigger.fallback") : state.current.provider + "/" + state.current.model));
-			const triggerLabel = effortLabel === void 0 ? modelLabel : modelLabel + " \u00b7 " + effortLabel;
-			const triggerAria = waiting ? t("trigger.loading") : state.current === null ? t("trigger.selectAria") : (effortLabel === void 0 ? t("trigger.aria", { model: modelLabel }) : t("trigger.ariaEffort", { model: modelLabel, effort: effortLabel }));
-
-			itemRefs.current = [];
-			let itemIndex = 0;
-			const itemRef = () => {
-				const at = itemIndex++;
-				return (node) => {
-					itemRefs.current[at] = node;
-				};
-			};
-
-			const searchField = React.createElement("div", { className: "dshk-searchWrap", key: "search" }, React.createElement("div", { className: "dshk-search" }, [
-				React.createElement(SearchIcon, { key: "icon" }),
-				React.createElement("input", {
-					key: "input",
-					ref: searchRef,
-					className: "dshk-searchInput",
-					type: "text",
-					value: query,
-					placeholder: t("searchPlaceholder"),
-					"aria-label": t("searchPlaceholder"),
-					onChange: (event) => setQuery(event.target.value),
-					onKeyDown: (event) => {
-						if (event.key === "Escape" && query !== "") {
-							event.preventDefault();
-							event.stopPropagation();
-							setQuery("");
-							return;
-						}
-						if (event.key === "Enter" && flatFiltered.length > 0) {
-							event.preventDefault();
-							choose({ provider: flatFiltered[0].group.id, model: flatFiltered[0].model.id });
-						}
-					},
-				}),
-				query === "" ? null : React.createElement("button", {
-					key: "clear",
-					type: "button",
-					className: "dshk-searchClear",
-					title: t("searchClear"),
-					"aria-label": t("searchClear"),
-					onClick: () => setQuery(""),
-				}, React.createElement(ClearIcon, {})),
-			]));
-			/*
-			 * Root level, mirroring the shipped seat: one "Model" cell (the current
-			 * model, drilling into the searchable list) and, when the model exposes
-			 * levels, one "Effort" cell. The search field belongs to the MODEL pane, so
-			 * it sits directly over the model options it filters instead of above the
-			 * Model/Effort rows.
-			 */
-			const rootPane = [];
-			rootPane.push(React.createElement("button", {
-				ref: itemRef(),
-				type: "button",
-				role: "menuitem",
-				className: "dshk-cell",
-				key: "model",
-				onClick: () => setPane("model"),
-			}, [
-				React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.model")),
-				React.createElement("span", { className: "dshk-cellValue", key: "v" }, modelLabel),
-				React.createElement(ChevronRight, { key: "c" }),
-			]));
-			if (reasoning !== void 0) rootPane.push(React.createElement("button", {
-				ref: itemRef(),
-				type: "button",
-				role: "menuitem",
-				className: "dshk-cell",
-				key: "effort",
-				onClick: () => setPane("effort"),
-			}, [
-				React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.effort")),
-				React.createElement("span", { className: "dshk-cellValue", key: "v" }, effortLabel),
-				React.createElement(ChevronRight, { key: "c" }),
-			]));
-			const modelPane = [];
-			modelPane.push(searchField);
-			if (state.status === "loading") modelPane.push(React.createElement("div", { className: "dshk-status", key: "loading" }, [
-				React.createElement("div", { key: "text" }, t("status.loading")),
-				/*
-				 * Surface what the directory actually reports. The composer seat is the one
-				 * place a user can read, and a loading row with no reason is exactly the
-				 * report this exists to prevent: a pending catalog (status=loading) and a
-				 * missing projection (status=idle) are different bugs.
-				 */
-				React.createElement("div", { key: "why", className: "dshk-statusWhy" }, summarizeSeatSnapshot(state)),
-			]));
-			if (failure !== null) modelPane.push(React.createElement("div", { className: "dshk-error", key: "failure" }, failure));
-			for (const entry of state.failures) modelPane.push(React.createElement("div", { className: "dshk-error", key: "fail:" + entry.id }, t("warning.groupLoad", { name: entry.name, message: entry.message })));
-			modelPane.push(React.createElement("div", { className: "dshk-groups", key: "groups" }, filtered.map((entry) => {
-				const group = entry.group;
-				const headingId = id + "-" + group.id;
-				return React.createElement("section", { role: "group", "aria-labelledby": headingId, className: "dshk-group", key: group.id }, [
-					React.createElement("div", { className: "dshk-groupTitle", id: headingId, key: "title" }, group.name),
-					...entry.models.map((model) => {
-						const selected = state.current?.provider === group.id && state.current.model === model.id;
-						return React.createElement("button", {
-							ref: itemRef(),
-							type: "button",
-							role: "menuitemradio",
-							"aria-checked": selected,
-							className: "dshk-option",
-							title: model.name,
-							disabled: busy,
-							key: model.id,
-							onClick: () => {
-								choose({ provider: group.id, model: model.id });
-							},
-						}, [
-							React.createElement("span", { className: "dshk-optionCopy", key: "copy" }, [
-								React.createElement("span", { className: "dshk-modelName", key: "name" }, model.name),
-								String(model.id) === String(model.name) ? null : React.createElement("span", { className: "dshk-modelId", key: "mid" }, model.id),
-							]),
-							React.createElement("span", { className: "dshk-check", key: "check" }, selected ? React.createElement(CheckIcon, {}) : null),
-						]);
-					}),
-				]);
-			})));
-			if (needle !== "" && flatFiltered.length === 0 && state.status !== "loading") modelPane.push(React.createElement("div", { className: "dshk-empty", key: "emptySearch" }, t("searchEmpty")));
-			/*
-			 * Any settled status with no rows must still say something: matching only
-			 * "ready" left the menu showing a bare search box over nothing when the
-			 * directory reported "idle" or "error".
-			 */
-			if (needle === "" && state.status !== "loading" && choices.length === 0) modelPane.push(React.createElement("div", {
-				className: state.error === null ? "dshk-empty" : "dshk-error",
-				key: "empty",
-			}, state.error === null ? t("empty.models") : t("loadFailed", { message: state.error })));
-
-			const panes = [];
-			if (pane === "root") {
-				panes.push(...rootPane);
-			} else if (pane === "effort") {
-				/*
-				 * Back returns to the ROOT rows, not straight to the model list: with the
-				 * shipped two-level shape restored, "back" means one level up.
-				 */
-				panes.push(React.createElement("button", {
-					ref: itemRef(),
-					type: "button",
-					role: "menuitem",
-					className: "dshk-cell",
-					key: "back",
-					onClick: () => setPane("root"),
-				}, [
-					React.createElement("span", { className: "dshk-cellLabel", key: "l" }, t("menu.back")),
-					React.createElement("span", { className: "dshk-cellValue", key: "v" }, t("menu.effort")),
-				]));
-				if (failure !== null) panes.push(React.createElement("div", { className: "dshk-error", key: "failure" }, failure));
-				if (effortChoices.length === 0) {
-					panes.push(React.createElement("div", { className: "dshk-empty", key: "empty" }, t("empty.efforts")));
-				} else {
-					for (const level of effortChoices) panes.push(React.createElement("button", {
-						ref: itemRef(),
-						type: "button",
-						role: "menuitemradio",
-						"aria-checked": effectiveEffort === level.effort,
-						className: "dshk-option",
-						disabled: busy,
-						key: level.key,
-						onClick: () => {
-							chooseEffort(level.effort);
-						},
-					}, [
-						React.createElement("span", { className: "dshk-optionCopy", key: "copy" }, React.createElement("span", { className: "dshk-modelName", key: "n" }, level.label)),
-						React.createElement("span", { className: "dshk-check", key: "check" }, effectiveEffort === level.effort ? React.createElement(CheckIcon, {}) : null),
-					]));
-				}
-			} else {
-				panes.push(...modelPane);
-			}
-
-			return React.createElement("div", {
-				ref: rootRef,
-				className: "dshk-root",
-				onKeyDown: onRootKeyDown,
-				onBlur,
-			}, [
-				React.createElement("button", {
-					ref: triggerRef,
-					type: "button",
-					className: "dshk-trigger",
-					"aria-label": triggerAria,
-					"aria-haspopup": "menu",
-					"aria-expanded": open,
-					"aria-controls": open ? id + "-menu" : void 0,
-					title: triggerLabel,
-					disabled: locked,
-					key: "trigger",
-					onClick: () => {
-						if (open) close();
-						else show();
-					},
-				}, [
-					React.createElement(ModelIcon, { key: "icon" }),
-					React.createElement("span", { className: "dshk-triggerLabel", key: "label" }, modelLabel),
-					effortLabel === void 0 ? null : React.createElement("span", { className: "dshk-triggerEffort", key: "effort" }, effortLabel),
-					React.createElement(ChevronDown, { className: open ? "dshk-chevron dshk-chevronOpen" : "dshk-chevron", key: "chev" }),
-				]),
-				open ? createPortal(React.createElement("div", {
-					ref: menuRef,
-					id: id + "-menu",
-					className: "dshk-menu",
-					style: menuPos ?? { visibility: "hidden", left: 0, top: 0, position: "fixed" },
-					role: "menu",
-					"aria-label": t("menu.aria"),
-					"aria-busy": state.status === "loading" || busy,
-				}, panes), document.body) : null,
-			]);
-		}
-
-		/** The model seat's locale namespace, mirroring the official seat's key set. */
-		const SEAT_NS = "hotkeyToolkit.seat";
-		const seatZh = {
-			"trigger.loading": "加载中…",
-			"trigger.fallback": "选择模型",
-			"trigger.selectAria": "选择模型",
-			"trigger.aria": "当前模型 {model}",
-			"trigger.ariaEffort": "当前模型 {model}，思考强度 {effort}",
-			"menu.aria": "模型选择",
-			"menu.model": "模型",
-			"menu.effort": "思考强度",
-			"menu.back": "返回",
-			"searchPlaceholder": "搜索模型…",
-			"searchEmpty": "没有匹配的模型",
-			"searchClear": "清除搜索",
-			"effort.providerDefault": "供应商默认",
-			"status.loading": "正在加载模型列表…",
-			"empty.models": "没有可用的模型",
-			"loadFailed": "模型列表加载失败：{message}",
-			"empty.efforts": "该模型没有可选的思考强度",
-			"retry": "重试",
-			"warning.groupLoad": "{name} 加载失败：{message}",
-		};
-		const seatEn = {
-			"trigger.loading": "Loading…",
-			"trigger.fallback": "Select model",
-			"trigger.selectAria": "Select model",
-			"trigger.aria": "Current model {model}",
-			"trigger.ariaEffort": "Current model {model}, effort {effort}",
-			"menu.aria": "Model selection",
-			"menu.model": "Model",
-			"menu.effort": "Effort",
-			"menu.back": "Back",
-			"searchPlaceholder": "Search models…",
-			"searchEmpty": "No matching model",
-			"searchClear": "Clear search",
-			"effort.providerDefault": "Provider default",
-			"status.loading": "Loading models…",
-			"empty.models": "No model available",
-			"loadFailed": "Could not load models: {message}",
-			"empty.efforts": "This model exposes no effort levels",
-			"retry": "Retry",
-			"warning.groupLoad": "{name} failed to load: {message}",
-		};
 
 		/**
 		 * Required services.
@@ -1689,17 +894,19 @@ window.__ModuleLoader__.load({
 		 * every read threw. The failure was swallowed into the panel's own error state,
 		 * which rendered as the generic "unavailable" the user saw.
 		 *
-		 * `remote.session` is load-bearing even though this plugin never calls it:
-		 * `modelDirectories` is a cordis Service whose tracker rebinds `this.ctx` to
-		 * the CALLING context, so `directoryFor()` resolves `this.ctx.remote.session`
-		 * through THIS fiber. Omitting it makes every call throw, which surfaces as a
-		 * model list that never leaves its loading row.
+		 * `remote.commands` is the transport the permissions panel dispatches
+		 * `/permission` through, and `remote.permissionPresets` supplies the preset
+		 * catalog. `remote.session` used to be listed here because the model seat's
+		 * `modelDirectories.directoryFor()` resolved `this.ctx.remote.session`
+		 * through THIS fiber; that seat now lives in another plugin, so the entry is
+		 * gone with it — an unused hard gate is a plugin that can hang on a service
+		 * it never reads.
 		 *
 		 * `workspaces` and `shortcuts` are deliberately NOT listed here. Both are
 		 * injected lazily via `ctx.inject([...], ...)` inside `apply`, so a carrier
-		 * without them still gets the settings page, the permissions panel, and the
-		 * model seat instead of the whole plugin waiting forever for a service that
-		 * never arrives.
+		 * without them still gets the settings page and the permissions panel
+		 * instead of the whole plugin waiting forever for a service that never
+		 * arrives.
 		 *
 		 * The difference between the two gates is not cosmetic. A name in THIS array
 		 * is a hard requirement: cordis leaves the plugin PENDING forever when it is
@@ -1713,7 +920,6 @@ window.__ModuleLoader__.load({
 			"locale",
 			"remote",
 			"remote.commands",
-			"remote.session",
 			"remote.settings",
 			"remote.permissionPresets",
 			"sessions",
@@ -1722,14 +928,13 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * Client plugin body: dictionaries + stylesheet, the settings page, the
-		 * official shortcut commands, the permissions panel, and the searchable model
-		 * seat (itself gated behind the model-search sub-plugin switch).
+		 * official shortcut commands, and the permissions panel. The searchable
+		 * model seat that used to be here moved to `dsh-client-ui-effort-slider`.
 		 * @param ctx - client root context.
 		 */
 		function apply(ctx) {
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "hotkey-toolkit: dictionaries");
 			ctx.effect(() => installStyles(), "hotkey-toolkit: styles");
-			ctx.effect(() => ctx.locale.register(SEAT_NS, { zh: seatZh, en: seatEn }), "hotkey-toolkit: seat dictionaries");
 			translate = ctx.locale.bind(NS);
 
 			/*
@@ -2833,91 +2038,6 @@ window.__ModuleLoader__.load({
 			label: () => translate("wpNav"),
 			locale: NS,
 		}, PermissionsSection)), "hotkey-toolkit: permissions panel");
-		/*
-		 * Model search — a TOGGLEABLE sub-plugin.
-		 *
-		 * The seat shadows the official `conversation.input.model` cell with a
-		 * searchable menu. That is a real trade (the official menu is replaced
-		 * wholesale), so it is the user's call, not an unconditional takeover.
-		 *
-		 * Mechanism. `slots.inject()` returns a disposer, and the dynamic facade
-		 * assigns a page-local priority LOWER than every shipped entry, so a
-		 * registration into this single cell wins it automatically — no `priority`
-		 * needed (passing one would be overwritten anyway). Registering installs the
-		 * seat; disposing it retires the seat and the official ModelSelect re-renders
-		 * in the same cell, because the cell falls to its next live survivor.
-		 *
-		 * A disposed `slots.inject` handle cannot be re-armed, so the toggle re-arms by
-		 * calling `slots.inject` again. The preference is read on every flip and also
-		 * subscribed to, so the switch in 设置 → 插件 takes effect immediately.
-		 *
-		 * Failing safe: if the seat ever crashes, the slot runtime abdicates it and the
-		 * official menu returns on its own — the same end state as turning the switch
-		 * off. This is why the seat is a sub-plugin at all.
-		 */
-		ctx.inject(["slots", "modelDirectories", "sessions"], (scope) => {
-			const models = scope.modelDirectories;
-			const sessions = scope.sessions;
-			/** The live seat registration's disposer, or null while the seat is retired. */
-			let seatOff = null;
-			/** Register the seat. Safe to call only while no registration is live. */
-			const mountSeat = () => {
-				seatOff = scope.slots.inject("conversation.input.model", () => scope.slots.register({
-					name: "conversation.input.model",
-					locale: SEAT_NS,
-					inject: (sessionId) => {
-						/*
-						 * directoryFor throws for a session whose scope/binding is not resolved
-						 * yet (cold boot, session restore). Letting that escape would crash the
-						 * entry and abdicate the seat, so degrade to a read-only face instead.
-						 */
-						/*
-						 * `available` defaults to true: it may only become false when this is
-						 * positively an addressed subagent session. The seat renders null when
-						 * unavailable, so reporting false on an unexpected error would delete the
-						 * composer button outright.
-						 *
-						 * The directory is resolved LAZILY, never here. This face is computed once per
-						 * binding, so calling directoryFor() now would throw during cold boot and pin an
-						 * empty directory for the whole session.
-						 */
-						let available = true;
-						try {
-							available = sessions.subagentAddress(sessionId) === void 0;
-						} catch (error) {
-							reportSeatFailure("sessions.subagentAddress", error);
-						}
-						const lazy = createLazyDirectory(() => models.directoryFor(sessionId));
-						return {
-							available,
-							directory: lazy.store,
-							load: () => {
-								if (available) lazy.load();
-							},
-							select: (selection) => available ? lazy.select(selection) : Promise.resolve(false),
-						};
-					},
-				}, ModelSelect));
-			};
-			/** Retire the seat, handing the cell back to the official menu. */
-			const unmountSeat = () => {
-				if (seatOff === null) return;
-				const off = seatOff;
-				seatOff = null;
-				off();
-			};
-			/** Bring the live seat in line with the stored preference. */
-			const syncSeat = () => {
-				const wanted = configStore.getSnapshot().modelSearch;
-				if (wanted && seatOff === null) mountSeat();
-				else if (!wanted && seatOff !== null) unmountSeat();
-			};
-			/* Apply the stored preference now, then follow every later flip. */
-			syncSeat();
-			scope.effect(() => configStore.subscribe(syncSeat), "hotkey-toolkit: model-search switch");
-			/* Release the seat with the plugin fiber even if the switch is left on. */
-			scope.effect(() => () => { unmountSeat(); }, "hotkey-toolkit: model-search seat teardown");
-		});
 	}
 
 		exports.apply = apply;
