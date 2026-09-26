@@ -4,3 +4,4 @@ dist/
 .DS_Store
 Thumbs.db
 _build/
+.git-commit-msg.txt
