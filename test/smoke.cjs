@@ -101,10 +101,12 @@ if (captured === null) throw new Error("client.js never called __ModuleLoader__.
 // disabled every row: the fake host was richer than the real one.
 const permissionsOf = (currentValue) => ({ currentValue });
 const listSnapshot = {
-  ids: ["s1", "s2"],
+  ids: ["s1", "s2", "s3"],
   byId: {
     s1: { id: "s1", displayTitle: "Session A", running: true, cwd: "H:/work/a", projectionValues: { permissions: permissionsOf("workspace-write") } },
     s2: { id: "s2", displayTitle: "Session B", running: false, cwd: "H:/work/b", projectionValues: { permissions: permissionsOf("read-only") } },
+    // Archived (see the workspaces stub below): the panel must NOT list it.
+    s3: { id: "s3", displayTitle: "Session C", running: false, cwd: "H:/work/c", projectionValues: { permissions: permissionsOf("read-only") } },
   },
   current: "s1",
   phase: "ready",
@@ -114,6 +116,26 @@ const sessions = {
   binding: () => ({ session: { command: async (line) => { commandCalls.push(line); return { ok: true, value: { matched: true } }; } } }),
   refresh: async () => {},
   subagentAddress: () => undefined,
+};
+/*
+ * The Workspace registry, for the archive set. `s3` is archived and is NOT in
+ * the sessions list above, so the archive filter has a visible effect on the
+ * rows: the panel must skip it and report the count. The shape mirrors the real
+ * `WorkspaceSnapshot` — only `archivedSessionIds` is read here, and it is read
+ * off `list.getSnapshot()`.
+ */
+const workspaces = {
+  list: {
+    subscribe: () => () => {},
+    getSnapshot: () => ({
+      items: [],
+      archivedSessionIds: ["s3"],
+      pinnedSessionIds: [],
+      state: "idle",
+      phase: "ready",
+      error: null,
+    }),
+  },
 };
 const settingsView = {
   writable: true,
@@ -158,6 +180,7 @@ const fakeScope = {
     ] }),
   },
   sessions,
+  workspaces,
   shortcuts: { register: () => () => {} },
   slots: {
     inject: (name, factory) => { factory(); return () => {}; },
@@ -307,7 +330,22 @@ const openDropdown = (index) => {
 
   // ---- case 3/4: clicking presets on a session row ----
   const rows = collect(tree, (entry) => entry.props?.className === "dshk-wpRow");
-  if (rows.length !== 2) throw new Error("case 3: expected 2 session rows, saw " + rows.length);
+  /*
+   * Exactly two rows from THREE sessions: `s3` ("Session C") is archived in the
+   * workspaces stub, so the panel must skip it. The count is the archive guard —
+   * a regression that drops the filter lists three rows here.
+   */
+  if (rows.length !== 2) {
+    throw new Error("case 3: expected 2 session rows (s3 is archived and must be skipped), saw " + rows.length
+      + ": " + JSON.stringify(rows.map((row) => explain(row))));
+  }
+  if (rows.some((row) => explain(row).includes("Session C"))) {
+    throw new Error("case 3: the ARCHIVED session 'Session C' is listed; archived sessions must not be manageable here");
+  }
+  // The skip is reported, not silent: the user is told where the row went.
+  if (!explain(tree).includes("wpArchivedSkipped")) {
+    throw new Error("case 3: the panel did not report the skipped archived session");
+  }
   const rowA = rows.find((row) => explain(row).includes("Session A"));
   if (rowA === undefined) throw new Error("case 3: Session A row not found");
 

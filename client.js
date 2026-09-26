@@ -23,6 +23,8 @@ window.__ModuleLoader__.load({
 		/** Live sessions service binding + its list snapshot store (late-bound in apply). */
 		let sessionsStore = null;
 		let sessionsRef = null;
+		/** Live Workspace registry, for the archive set (late-bound in apply). */
+		let workspacesRef = null;
 		/** localStorage key holding the user's shortcut preferences. */
 		const STORAGE_KEY = "dsh.hotkeyToolkit.v1";
 		/** Electron preload bridge exposing argument-free Desktop actions. */
@@ -83,6 +85,7 @@ window.__ModuleLoader__.load({
 			wpDefaultHint: "仅对之后新建的会话生效，已有会话不受影响。",
 			wpRefresh: "刷新列表",
 			wpEmpty: "当前没有会话。",
+			wpArchivedSkipped: "已跳过已归档会话：",
 			wpUnavailable: "不可用",
 			wpLoadFailed: "默认权限加载失败：",
 			wpApplied: "已切换到 ",
@@ -153,6 +156,7 @@ window.__ModuleLoader__.load({
 			wpDefaultHint: "Applies to sessions created afterwards only; existing sessions keep their permissions.",
 			wpRefresh: "Refresh list",
 			wpEmpty: "No sessions right now.",
+			wpArchivedSkipped: "Archived sessions skipped: ",
 			wpUnavailable: "Unavailable",
 			wpLoadFailed: "Failed to load the default permission: ",
 			wpApplied: "Switched to ",
@@ -678,6 +682,26 @@ window.__ModuleLoader__.load({
 				(listener) => sessionsStore.subscribe(listener),
 				() => sessionsStore.getSnapshot(),
 			);
+		}
+
+		/**
+		 * Subscribe React to the Workspace registry's archive set.
+		 *
+		 * Returns the set of archived session ids. It degrades to an EMPTY set when
+		 * the registry is absent, which is the safe direction: an unknown archive
+		 * state must not hide sessions the user can still act on. Showing a row that
+		 * turns out to be archived is a harmless no-op (the Host refuses the command);
+		 * hiding an active row would silently remove a control the user needs.
+		 */
+		function useArchivedIds() {
+			const snapshot = React.useSyncExternalStore(
+				(listener) => (workspacesRef === null ? () => {} : workspacesRef.list.subscribe(listener)),
+				() => (workspacesRef === null ? null : workspacesRef.list.getSnapshot()),
+			);
+			const ids = snapshot !== null && snapshot !== void 0 && Array.isArray(snapshot.archivedSessionIds)
+				? snapshot.archivedSessionIds
+				: [];
+			return React.useMemo(() => new Set(ids), [snapshot]);
 		}
 
 		/**
@@ -1537,20 +1561,48 @@ window.__ModuleLoader__.load({
 		/**
 		 * Required services.
 		 *
-		 * `remote` and `remote.session` are load-bearing even though this plugin never
-		 * calls them: `modelDirectories` is a cordis Service whose tracker rebinds
-		 * `this.ctx` to the CALLING context, so `directoryFor()` resolves
-		 * `this.ctx.remote.session` through THIS fiber. Omitting them makes every
-		 * call throw `cannot get property "remote.session" without inject`, which
-		 * surfaces as a model list that never leaves its loading row.
+		 * NESTED REMOTE NAMESPACES ARE SEPARATELY GATED. `ctx.remote` is one service,
+		 * but every namespace under it (`ctx.remote.settings`,
+		 * `ctx.remote.permissionPresets`, `ctx.remote.session`, …) must ALSO be
+		 * declared by its own dotted name. Cordis resolves a property through the
+		 * fiber's `inject` set and throws
+		 * `cannot get property "remote.settings" without inject` otherwise — and a
+		 * plain `remote` entry does NOT cover its children.
 		 *
-		 * `shortcuts` is deliberately NOT listed here. It is injected lazily via
-		 * `ctx.inject(['shortcuts'], ...)` inside `apply`, so a carrier without the
-		 * shortcut service still gets the settings page, the permissions panel, and
-		 * the model seat instead of the whole plugin waiting forever for a service
-		 * that never arrives.
+		 * That is exactly how the permissions panel stayed broken after the first fix:
+		 * it read `remote.settings.describe()` while only `remote` was declared, so
+		 * every read threw. The failure was swallowed into the panel's own error state,
+		 * which rendered as the generic "unavailable" the user saw.
+		 *
+		 * `remote.session` is load-bearing even though this plugin never calls it:
+		 * `modelDirectories` is a cordis Service whose tracker rebinds `this.ctx` to
+		 * the CALLING context, so `directoryFor()` resolves `this.ctx.remote.session`
+		 * through THIS fiber. Omitting it makes every call throw, which surfaces as a
+		 * model list that never leaves its loading row.
+		 *
+		 * `workspaces` and `shortcuts` are deliberately NOT listed here. Both are
+		 * injected lazily via `ctx.inject([...], ...)` inside `apply`, so a carrier
+		 * without them still gets the settings page, the permissions panel, and the
+		 * model seat instead of the whole plugin waiting forever for a service that
+		 * never arrives.
+		 *
+		 * The difference between the two gates is not cosmetic. A name in THIS array
+		 * is a hard requirement: cordis leaves the plugin PENDING forever when it is
+		 * missing. A nested `ctx.inject` is a soft one: the callback simply never
+		 * runs, and the feature that depends on it degrades. `workspaces` is
+		 * genuinely optional here — the archive set only REFINES the permissions
+		 * panel, and `useArchivedIds()` already fails open to an empty set — so it
+		 * must not be able to take the whole plugin down with it.
 		 */
-		const inject = ["locale", "remote", "remote.session", "sessions", "slots"];
+		const inject = [
+			"locale",
+			"remote",
+			"remote.session",
+			"remote.settings",
+			"remote.permissionPresets",
+			"sessions",
+			"slots",
+		];
 
 		/**
 		 * Client plugin body: dictionaries + stylesheet, the settings page, the
@@ -1601,6 +1653,23 @@ window.__ModuleLoader__.load({
 			ctx.inject(["sessions"], (scope) => {
 				sessionsStore = scope.sessions.list;
 				sessionsRef = scope.sessions;
+			});
+
+			/*
+			 * The Workspace registry, for the archive set.
+			 *
+			 * Archiving is the user saying "this session is done". An archived session
+			 * runs no model step (the Host's own archived-session gate refuses them), so
+			 * offering a permission switch for it would be a control that cannot do
+			 * anything — the /permission command has no effect on work that never runs.
+			 * The panel therefore lists active sessions only and reports how many were
+			 * skipped, rather than silently hiding them.
+			 *
+			 * Bound here rather than read per render so the snapshot subscription belongs
+			 * to this plugin's fiber.
+			 */
+			ctx.inject(["workspaces"], (scope) => {
+				workspacesRef = scope.workspaces;
 			});
 
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
@@ -1794,6 +1863,15 @@ window.__ModuleLoader__.load({
 			error: null,
 			/** Process-level preset catalog from the Host (shared by every session). */
 			catalog: [],
+			/**
+			 * Presets eligible as a NEW-SESSION DEFAULT, straight from the Host.
+			 *
+			 * `catalog.options` is every selectable preset; `catalog.defaultOptions`
+			 * is the subset configured as an eligible default. The official
+			 * settings row uses the latter, and so must this: a preset that exists
+			 * for live switching is not necessarily a legal default.
+			 */
+			defaultCatalog: [],
 			catalogStatus: "idle",
 			catalogError: null,
 			version: 0,
@@ -1819,12 +1897,20 @@ window.__ModuleLoader__.load({
 					if (!response.ok) {
 						throw new Error(response.error && response.error.message ? response.error.message : String(response.error));
 					}
-					const options = response.value !== null && typeof response.value === "object" && Array.isArray(response.value.options)
-						? response.value.options
-						: [];
-					this.catalog = options
+					const value = response.value;
+					const readOptions = (raw) => (Array.isArray(raw) ? raw : [])
 						.filter((option) => option !== null && typeof option === "object" && typeof option.value === "string")
 						.map((option) => ({ value: option.value, name: typeof option.name === "string" ? option.name : option.value }));
+					this.catalog = readOptions(value !== null && typeof value === "object" ? value.options : void 0);
+					/*
+					 * `defaultOptions` is a distinct field, not a synonym for `options`.
+					 * The settings schema for `defaultPreset` is a bare string
+					 * (`z.string().volatile()`), so it advertises NO enum values — the
+					 * schema-derived list collapsed to the current value alone and the
+					 * default-permission dropdown could never actually switch anything.
+					 * The Host's own catalog is what the official row reads.
+					 */
+					this.defaultCatalog = readOptions(value !== null && typeof value === "object" ? value.defaultOptions : void 0);
 					this.catalogStatus = "ready";
 				} catch (cause) {
 					this.catalogStatus = "error";
@@ -1936,13 +2022,30 @@ window.__ModuleLoader__.load({
 			() => permissionPanel.version,
 		);
 		/*
-		 * Bind the settings transport and the schema. `remote.settings` is the
-		 * supported 0.1.7 surface for both reading the document and writing it;
-		 * `settingsSchema` supplies the selectable const values when the catalog
-		 * does not.
+		 * Bind the settings transport. `remote.settings` is the supported 0.1.7
+		 * surface for both reading the document and writing it.
+		 *
+		 * Deliberately injected WITHOUT `settingsSchema`: the selectable defaults
+		 * now come from the Host catalog's `defaultOptions`, so the schema is only
+		 * a fallback. Coupling the two would mean a carrier without the schema
+		 * service leaves this callback unfired, `settingsCtx` null, and the panel
+		 * permanently on "loading" — the same silent-failure shape as the original
+		 * `settingsScope` bug, and one this plugin has no reason to risk.
 		 */
-		ctx.inject(["remote", "settingsSchema"], (scope) => {
+		ctx.inject(["remote"], (scope) => {
 			permissionPanel.settingsCtx = scope;
+		});
+
+		/*
+		 * Optional schema fallback for the default-preset choices.
+		 *
+		 * The real `defaultPreset` schema is `z.string().volatile()` — no enum — so
+		 * this usually yields nothing beyond the current value. It is kept because a
+		 * deployment MAY constrain the field to a union of consts, in which case the
+		 * schema is a better answer than a hardcoded list. Absent the service, the
+		 * plugin simply keeps its built-in fallback.
+		 */
+		ctx.inject(["settingsSchema"], (scope) => {
 			const schema = scope.settingsSchema;
 			defaultPresetOptions = (current) => {
 				try {
@@ -2102,6 +2205,7 @@ window.__ModuleLoader__.load({
 		function PermissionsSection(props) {
 			const { t } = props;
 			const sessions = useSessions();
+			const archivedIds = useArchivedIds();
 			usePermissionPanel();
 			const panel = permissionPanel;
 			const [gate, setGate] = React.useState(null);
@@ -2140,6 +2244,14 @@ window.__ModuleLoader__.load({
 				for (const id of sessions.ids) {
 					const summary = sessions.byId[id];
 					if (summary === void 0 || summary.parentId !== void 0) continue;
+					/*
+					 * Archived sessions are skipped. Archiving means "this session is done",
+					 * and the Host's own archived-session gate refuses to run a model step
+					 * for one — so a permission switch here would be a control that cannot
+					 * affect anything. Subagents are skipped above for the same reason: they
+					 * inherit their parent's permissions rather than owning a switch.
+					 */
+					if (archivedIds.has(id)) continue;
 					const values = summary.projectionValues;
 					const permission = values !== void 0 ? values.permissions : void 0;
 					const current = permission !== void 0 && permission !== null && typeof permission.currentValue === "string" ? permission.currentValue : null;
@@ -2164,7 +2276,25 @@ window.__ModuleLoader__.load({
 				}
 				out.sort((a, b) => a.title.localeCompare(b.title));
 				return out;
-			}, [sessions, t, panel.catalog, panel.version]);
+			}, [sessions, t, panel.catalog, panel.version, archivedIds]);
+
+			/**
+			 * How many sessions the archive filter removed from the list.
+			 *
+			 * Counted rather than silently dropped: a user who archived a session and
+			 * then wonders where its row went deserves an answer in the panel, not an
+			 * empty space. Only ordinary (non-subagent) sessions are counted, so the
+			 * number matches what would otherwise have been listed.
+			 */
+			const archivedCount = React.useMemo(() => {
+				let count = 0;
+				for (const id of sessions.ids) {
+					const summary = sessions.byId[id];
+					if (summary === void 0 || summary.parentId !== void 0) continue;
+					if (archivedIds.has(id)) count += 1;
+				}
+				return count;
+			}, [sessions, archivedIds]);
 
 			/*
 			 * Apply a preset to one session: the part that actually talks to the Host.
@@ -2224,7 +2354,28 @@ window.__ModuleLoader__.load({
 				}
 			};
 
-			const defaultOptions = panel.options.map((option) => ({ value: option.id, label: presetLabel(option.id, t) }));
+			/*
+			 * New-session default choices come from the Host catalog's
+			 * `defaultOptions`, NOT from the settings schema.
+			 *
+			 * The schema for `defaultPreset` is `z.string().volatile()` — a plain
+			 * string with no enum — so the schema-derived list held only the current
+			 * value and the dropdown could not switch anything. The official
+			 * settings row reads `catalog.defaultOptions`, which is the configured
+			 * subset of presets eligible as a default.
+			 *
+			 * The current value is merged in when the catalog omits it. The official
+			 * row THROWS on that mismatch, but a thrown error here would blank the
+			 * whole panel; showing the live value alongside the selectable ones keeps
+			 * the control honest and the page alive. `defaultPresetOptions` stays as
+			 * the fallback for the window before the catalog lands.
+			 */
+			const defaultChoices = panel.defaultCatalog.length > 0
+				? panel.defaultCatalog.map((option) => ({ value: option.value, label: presetLabel(option.value, t) }))
+				: panel.options.map((option) => ({ value: option.id, label: presetLabel(option.id, t) }));
+			const defaultOptions = panel.current !== null && !defaultChoices.some((option) => option.value === panel.current)
+				? [{ value: panel.current, label: presetLabel(panel.current, t) }, ...defaultChoices]
+				: defaultChoices;
 			const defaultBusy = panel.status === "loading" || panel.status === "saving";
 			const defaultState = panel.status === "error"
 				? text("wpLoadFailed") + (panel.error ?? "")
@@ -2268,6 +2419,13 @@ window.__ModuleLoader__.load({
 						disabled: row.capable !== true,
 						onSwitch: (preset) => switchSession(row, preset),
 					})),
+					/*
+					 * Say out loud what the archive filter removed. A row that vanishes
+					 * without explanation reads as a bug; a count tells the user the
+					 * session still exists and where it went (the archive), and that its
+					 * permissions are deliberately not managed from here.
+					 */
+					archivedCount > 0 ? React.createElement("div", { className: "dshk-wpState", key: "archived" }, t("wpArchivedSkipped") + archivedCount) : null,
 				]),
 				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
 				/*

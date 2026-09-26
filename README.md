@@ -73,9 +73,12 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
 - 顶部可修改**新会话的默认权限预设**（写入宿主 `permission` 设置）；
 - 切换到「完全权限」前会弹出风险确认，且确认框是**窗口居中的模态框**（Portal 挂到 `<body>` 的固定遮罩层，独立于面板滚动容器），不再渲染在会话列表末尾——列表很长时无需滚到底部；支持 Esc 与点击遮罩关闭；
 - 下拉为 Portal 渲染、视口内自动翻转避让，支持点击外部 / Esc 关闭；
-- 会话列表支持手动刷新，子会话不出现在列表中。
+- 会话列表支持手动刷新，子会话不出现在列表中；
+- **已归档的会话不再出现在列表中**，并在卡片底部注明跳过了几个：归档意味着「这个会话已经结束了」，
+  宿主自身的归档闸门会拒绝为它执行模型步骤，因此在这里给它一个权限开关等于给了一个**不会起作用的控件**；
+  跳过数量是明确写出来的而不是悄悄省略——行突然消失看起来像 bug，写清楚用户才知道会话还在（在归档里）。
 
-**1.6.0 修复**：此前本面板**完全不可用**，原因有两个，且都是静默失败：
+**1.7.0 修复**：此前本面板**完全不可用**，原因有四个，且都是静默失败：
 
 1. 它通过 `ctx.settingsScope` 读取设置面，而该服务在 **DSH 0.1.7 已被移除**
    （改用 `configForms`）。嵌套的 `ctx.inject(['settingsScope'], …)` **既不报错也不会让插件激活失败**——
@@ -85,10 +88,49 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
    但真实的 `PermissionSelection` 只有 `{ currentValue }`，**没有 `options` 字段**。
    于是每行都算出 `capable: false` 并渲染为**禁用**——行在，但永远点不动。
    预设选项现在取自进程级目录 `remote.permissionPresets.catalog()`（官方选择器用的也是它）。
+3. 第一轮修复后面板**依旧**不可用：它读 `remote.settings` / `remote.permissionPresets`，
+   但 `inject` 里只声明了 `remote`。**嵌套的 remote 命名空间是各自独立门控的**——
+   `ctx.remote` 是一个服务，而它下面的每个命名空间都必须用自己的点号名字再声明一次，
+   否则 cordis 抛 `cannot get property "remote.settings" without inject`，异常又被面板吞进错误态，
+   于是用户看到的还是那个笼统的「不可用」。
+4. 「新会话默认权限」下拉只能显示**当前值**，切不动。它从设置 schema 推导候选项，
+   而 `defaultPreset` 的真实 schema 是 `z.string().volatile()`——一个**没有枚举的裸字符串**，
+   推导结果自然只剩当前值。官方那一行读的是目录里的 `catalog.defaultOptions`，现已改为同一来源
+   （并把当前值并入列表，而不是像官方那样在缺失时抛错——抛错会把整个面板打空）。
 
-两个 bug 形状相同：代码信任了一个**并不存在**的服务或字段，而且没有任何地方报错。
+四个 bug 形状相同：代码信任了一个**并不存在**的服务或字段，而且没有任何地方报错。
 它们之所以没被测出来，是因为测试桩比真实宿主**更丰富**（桩提供了 `settingsScope`，
 还凭空造了 `permissions.options`）。`test/host-api.cjs` 现在专门盯住这类问题。
+
+**硬门控 vs 软门控**：`inject` 数组里的名字是**硬要求**——服务缺失时 cordis 会让插件**永远停在 PENDING**；
+而嵌套的 `ctx.inject([...], …)` 是**软要求**——回调不执行，只有依赖它的那个功能降级。
+因此可选服务（`workspaces`、`shortcuts`）一律走软门控：`workspaces` 只用来**细化**权限面板，
+`useArchivedIds()` 在服务缺失时**失败开放**为空集合（多显示一行归档会话无害，少显示一行正常会话才是 bug），
+把它放进硬门控会把「某个功能不可用」升级成「整个插件不加载」。
+`test/host-api.cjs` 静态断言这两个名字不在硬门控数组里，`test/platform.cjs` 则在**完全不提供 `workspaces`** 的载体上
+验证插件仍能激活并注册全部区块与命令。
+
+**嵌套命名空间的门控是逐个生效的**，这一点值得单独强调，因为它就是第三个 bug 的成因：
+`ctx.remote` 是一个服务，但 `ctx.remote.settings`、`ctx.remote.permissionPresets`、`ctx.remote.session`
+各自都是**独立注册的服务**（网关侧 `remoteServiceKey(namespace)`），读取时经由 `remote` 的 tracker
+重定向到 `ctx['remote.<ns>']`，而重定向是按**读取方 fiber 的 inject 集合**解析的——
+所以只声明 `remote` 并不覆盖它的子命名空间。
+
+这不是推测，`tools/probe-inject.cjs` 用**真实 cordis** 复现了全过程：
+
+```bash
+node tools/probe-inject.cjs
+# J parent=[remote,remote.settings] (missing permissionPresets) nested=[remote] read catalog
+#   -> THREW: cannot get property "remote.permissionPresets" without inject
+# I parent=[remote,remote.settings,remote.permissionPresets] nested=[remote] read BOTH
+#   -> value=described/cataloged
+```
+
+场景 **J** 就是线上那个 bug（缺失即抛错），场景 **I** 是修复后的行为（嵌套作用域照常读到两个命名空间，
+因为 cordis 会沿 fiber 链向上查找）。注意 `remote.settings` 与 `remote.permissionPresets` 是**分别**校验的：
+只缺后者时前者仍能读到，这正是面板表现为「半个功能坏掉」而不是彻底消失的原因。
+`test/host-api.cjs` 现在静态扫描活代码里所有 `remote.<ns>` 读取，断言每一个都在 `inject` 里声明过——
+把它从数组里删掉会立刻让测试失败。
 
 ### 设置页
 
@@ -127,8 +169,8 @@ dsh plugin --profile web add "link:H:/Github/dsh-hotkey-toolkit"
 dsh plugin --profile desktop add "link:H:/Github/dsh-hotkey-toolkit"
 
 # 2) 从 tarball 安装（不带源码，最干净）
-npm pack                                  # 生成 dsh-hotkey-toolkit-1.6.0.tgz
-dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.6.0.tgz"
+npm pack                                  # 生成 dsh-hotkey-toolkit-1.7.0.tgz
+dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.7.0.tgz"
 
 # 3) 从 npm 安装（发布后）
 dsh plugin --profile web add dsh-hotkey-toolkit
@@ -165,10 +207,15 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
   它还断言 Web 档位**保持不绑定**——这正是开发时抓到真实违规的那条断言。
 - `test/host-api.cjs`：**宿主 API 兼容**。专门盯住「插件信任了宿主并不提供的服务或字段」这一类**静默**失败：
   静态检查（先剥掉注释，只查活代码）断言源码不再出现已被移除的 `settingsScope`，
-  也不再从 `permissions` 投影读取并不存在的 `options`；
+  也不再从 `permissions` 投影读取并不存在的 `options`；断言活代码里每一个 `remote.<ns>` 读取
+  都在 `inject` 数组里声明过（嵌套命名空间各自独立门控，漏一个就是一次静默抛错）；
+  断言 `workspaces` / `shortcuts` **没有**被放进硬门控 `inject` 数组（放进去＝服务缺失时整个插件永远 PENDING）；
   行为检查则在**两种载体**上，仅用 DSH 0.1.7 真实提供的接口激活插件，断言权限面板确实调用了
-  `remote.settings.describe()` 与 `remote.permissionPresets.catalog()`，
-  且 `dsh-desktop` 表单只在 Desktop 载体解析一次。两个已修 bug 都用变异测试验证过能被它抓到。
+  `remote.settings.describe()` 与 `remote.permissionPresets.catalog()`、
+  `dsh-desktop` 表单只在 Desktop 载体解析一次，
+  渲染面板断言**已归档会话不出现在行里**、活跃会话在、跳过数量被报告，
+  并断言「新会话默认权限」下拉取的是 `defaultOptions` 而非 `options`。
+  四个已修 bug 与归档过滤都用变异测试验证过能被它抓到。
 - `test/dictionaries.cjs`：词典完整性。断言 `zh`/`en` 与 `seatZh`/`seatEn` 键集完全一致、
   代码里每一个字面量 `t("key")` 都存在、以及快捷键标签键（含 `"cmdMode" + mode…` 这种动态拼接）都存在。
   宿主本地化**不跨命名空间回退**，缺键会直接把原始键名显示给用户。
@@ -182,12 +229,17 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
   以及存量 OFF / 缺省 / 旧版 1.4 载荷 / 损坏 JSON 四种输入都能正确降级。
 - `test/smoke.cjs`：权限面板渲染 + 下拉 Portal + 点击切换 + 默认权限写入。
   它的宿主桩**只提供真实存在的接口**（会话投影里没有 `options`，也不提供 `settingsScope`），
-  并额外断言会话行的选择器**没有被禁用**——这条正是修好「权限管理不可用」的回归守卫。
+  并额外断言会话行的选择器**没有被禁用**——这条正是修好「权限管理不可用」的回归守卫；
+  会话夹具里放了一个**已归档**会话，断言它不出现在行里而其余会话照常，跳过数量也照常报告。
 - `test/platform.cjs`：Web/Desktop 双载体回归。以「有 preload 桥」「只有 URL 标记」「两者都没有」三种页面加载真实 `client.js`，
   断言插件**不再安装自己的全局 keydown 监听**（键盘归官方服务独有）、五个命令都已贡献给官方服务、
   Desktop-only 命令**不含任何 Web 档位默认值**且在 Web 下 `resolve` 返回 `blocked`、
   「刷新界面」默认不绑定、Web 下刷新回退为页面刷新、Desktop 下走宿主动作、
   以及仅在 Desktop 载体解析一次 `dsh-desktop` 配置表单；并校验两个命名空间 zh/en 键集合完全一致。
+  它还会在**完全不提供 `workspaces`** 的载体上再加载一次（软门控缺失时宿主根本不会回调 `ctx.inject`），
+  断言插件仍能激活、设置页与权限面板都已注册、五个命令一个不少；
+  并在**不提供 `settingsSchema`** 的载体上渲染权限面板，断言它依然驱动了
+  `remote.settings.describe()`——即设置绑定没有和 schema 服务重新耦合。
 - `test/model-seat-dom.cjs`（可选）：用真实 React 18 + jsdom 渲染并驱动席位，验证根菜单只有「模型 / 推理等级」两行、搜索框位于模型列表首位、占位符为真实译文、过滤收敛、Enter 选中。
 - `test/model-seat-resilience.cjs`（可选）：抗崩退回归。席位是「遮蔽官方」的单选席位，**首次渲染出错就会被席位运行时退役（abdicate）**，此后整段会话都退回官方两级菜单、搜索框消失。该套件用残缺快照（缺 `groups`/`failures`、空对象、`reasoning` 无 `efforts`）与「会话未解析导致 `directoryFor` 抛错」两类冷启动输入，断言搜索框依然渲染、注册不被中断。两个 DOM 套件都需指定依赖目录：
   ```bash
@@ -205,6 +257,36 @@ node tools/verify-profile.cjs web
 `dsh.client.platform === "web"`、`dsh.client.inject` 含 `@deepseek-ai/dsh-client-shortcuts`。
 这比只检查 `package.json` 更有力：它证明插件真的进了组合树。
 
+### 注入语义探针
+
+```bash
+node tools/probe-inject.cjs
+```
+
+用**真实 cordis**（`vendor/cordis/lib`）验证嵌套 `ctx.inject([...], …)` 的门控语义，无需启动应用。
+它把网关的注册方式如实复刻出来：`remote` 是一个 `Service`，而每个 `remote.<ns>` 是**独立注册的服务**，
+读取时经 tracker 重定向到 `ctx['remote.<ns>']` 并按读取方 fiber 的 inject 集合解析。
+脚本会打印 10 个场景的实测结果，其中最关键的两个是：
+
+- **J**（缺失即抛错）：父层只声明 `remote.settings` 时，嵌套作用域读 `remote.permissionPresets` 抛
+  `cannot get property "remote.permissionPresets" without inject` —— 这正是线上那个 bug；
+- **I**（修复后）：父层声明齐全时，嵌套作用域能同时读到 `settings` 与 `permissionPresets`，
+  因为 cordis 会沿 fiber 链向上查找。
+
+这份脚本的存在是为了**让结论可复现**而不是停留在注释里：`test/host-api.cjs` 的静态断言就是照着它写的。
+
+### 变异测试助手
+
+```bash
+node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'
+```
+
+按字面量替换生成一份变异副本（不做替换就报错退出），用来验证某条断言**真的能抓到**它声称防住的缺陷。
+断言没被变异测试验证过，就只是一句注释——本项目的每个关键守卫都用它跑过一遍。
+
+之所以是脚本而不是 `node -e`：PowerShell 会吃掉内联脚本里的引号与反斜杠，
+结果是变异**没生效**而测试照样通过，看起来像「断言通过」实则什么也没验证。这个坑踩过一次。
+
 ## 说明
 
 - 模式切换会先写入 `dsh-desktop` 设置（切换到非兼容模式时同时关闭浏览器访问与局域网暴露），再重启 DSH Desktop 生效；因此该功能与「重启 DSH」一样**只在 Desktop 载体可用**。
@@ -216,6 +298,8 @@ node tools/verify-profile.cjs web
 - **命令开关拦的是动作，不是绑定**：这样既不会让官方界面里正在编辑的草稿失效，也不会让用户录制的组合键在停用期间丢失；停用返回 `pass` 而非 `blocked`，避免吞掉用户真正想按的键。
 - **旧版载荷兼容**：1.4 及更早写入的 `{ enabled, refresh, restart, modes }` 会被识别并忽略未知字段，只保留模型搜索开关，因此升级不会丢失该偏好；`shortcuts` 逐键合并，缺失的键取默认（开）。
 - `shortcuts` 服务用 `ctx.inject(['shortcuts'], …)` **惰性注入**，而不是写进插件顶层 `inject`：这样即使某个载体没有该服务，设置页、权限面板、模型席位依然可用，只有快捷键缺失，而不是整个插件停在 PENDING。
+- **面板的设置绑定只注入 `remote`，不注入 `settingsSchema`**：候选默认权限改从宿主目录 `defaultOptions` 读取后，schema 只剩兜底作用。把两者耦合会让「没有 schema 服务的载体」上绑定回调不执行、`settingsCtx` 为 null、面板永远停在「加载中」——与 `settingsScope` 那个 bug 完全同形，没有理由再冒一次这个风险。`test/platform.cjs` 用一个**不提供 `settingsSchema`** 的载体盯着这条。
+- **`catalog.options` 与 `catalog.defaultOptions` 是两个不同的字段**：前者是当前可选的全部预设（含 `auto`），后者才是**可作为新会话默认**的子集。官方那一行读后者，本插件也读后者；`test/host-api.cjs` 的桩把两者设成不同集合，读错字段会立刻被抓到。
 - **依赖宿主服务一律用 `ctx.inject` 惰性获取，并对其缺失保持可降级**：DSH 0.1.7 移除了 `settingsScope`（改为 `configForms`），而嵌套 `inject` 对不存在的服务**既不报错也不激活失败**——回调静默不执行。因此面板侧的探测失败会写入 `window.__dshHotkeyPanel` 并打日志，把「面板莫名空白」变成一行可读答案。
 - 注册失败会被 `try/catch` 收敛成「没有快捷键」并打日志，不会让 `apply()` 抛错——插件退化是可接受的，插件加载失败不是。
 - 模型搜索通过遮蔽官方 `conversation.input.model` 席位实现；关闭开关或席位出错时，官方模型选择会自动恢复。
@@ -233,3 +317,5 @@ node tools/verify-profile.cjs web
 - 降级时不会静默吞掉原因：最后一次失败会记录在 `window.__dshHotkeySeat`（含 `where` 与 `message`）。排查时在控制台执行 `window.__dshHotkeySeat` 即可看到是 `directoryFor` 还是 `subagentAddress` 出的问题。
 - 席位文案注册在 `hotkeyToolkit.seat` 命名空间；宿主的本地化**不跨命名空间回退**，因此该命名空间必须自带席位用到的全部键（缺失时会直接显示原始键名）。
 - 权限面板读取宿主的 `permissions` 会话投影（会话列表快照自带），切换走 `/permission` 斜杠命令，默认预设走 `permission` 设置命名空间——三者都是宿主原生通道，插件自身不存储任何权限状态。
+- 归档集合读自 `workspaces.list.getSnapshot().archivedSessionIds`（`IWorkspaces` 的 `WorkspaceSource`，官方侧栏用的是同一个面）。归档会话不列出、不管理，并报告跳过数量；该服务缺失时降级为**空集合**（失败开放）。
+- `workspaces` 与 `shortcuts` 走**软门控**（嵌套 `ctx.inject`），不进 `inject` 数组。硬门控数组里的名字缺失会让插件**永远停在 PENDING**，而这两个服务都只是「有更好」：`workspaces` 只细化权限面板，`shortcuts` 只提供命令。把可选服务放进硬门控，会把「某功能不可用」升级成「插件不加载」。

@@ -78,14 +78,18 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
  * Load the plugin against one carrier.
  *
  * `bridge` installs the context-isolated Desktop preload bridge; `search` is the
- * window URL query, which carries the Electron-owned mode marker.
+ * window URL query, which carries the Electron-owned mode marker. `omit` names
+ * services to WITHHOLD, which is how the suite proves a soft dependency really
+ * is soft: the plugin must still activate and still register its sections.
  */
-function loadPlugin({ bridge, search }) {
+function loadPlugin({ bridge, search, omit = [] }) {
   const reloads = [];
   const fetches = [];
   const formReads = [];
   const commands = new Map();
   const registrations = new Map();
+  /** Every `remote.settings.describe()` call: proof the settings binding fired. */
+  const settingsReads = [];
   // The plugin must NOT install a global keydown listener any more; capturing
   // them here lets the suite assert that directly.
   const windowKeydown = [];
@@ -137,6 +141,21 @@ function loadPlugin({ bridge, search }) {
     inject: (name, factory) => { factory(); return () => {}; },
     register: (options, component) => { registrations.set(options.id, component); return () => {}; },
   };
+  /*
+   * The Workspace registry, for the archive set. Present on BOTH carriers: the
+   * panel reads it through a nested `ctx.inject(['workspaces'], …)` precisely so
+   * a carrier without it still loads, and this stub is what lets the suite prove
+   * that path stays optional rather than becoming a hard requirement.
+   */
+  const workspacesService = {
+    list: {
+      subscribe: () => () => {},
+      getSnapshot: () => ({
+        items: [], archivedSessionIds: [], pinnedSessionIds: [],
+        state: "idle", phase: "ready", error: null,
+      }),
+    },
+  };
   const shortcutsService = {
     register: (command) => { commands.set(command.id, command); return () => { commands.delete(command.id); }; },
   };
@@ -152,11 +171,14 @@ function loadPlugin({ bridge, search }) {
     } else if (names.includes("sessions")) Object.assign(scope, { sessions: sessionsService });
     if (names.includes("shortcuts")) Object.assign(scope, { shortcuts: shortcutsService });
     if (names.includes("slots")) Object.assign(scope, { slots: slotsService });
+    if (names.includes("workspaces")) Object.assign(scope, { workspaces: workspacesService });
     if (names.includes("remote") || names.includes("settingsSchema")) {
       Object.assign(scope, {
         remote: {
           settings: {
-            describe: async () => ({ ok: true, value: { writable: true, namespaces: [] } }),
+            // Counted: the panel's `load()` calls this, so a non-zero count is
+            // direct evidence that the settings binding actually fired.
+            describe: async () => { settingsReads.push(1); return { ok: true, value: { writable: true, namespaces: [] } }; },
             mutate: async () => ({ ok: true, value: { ns: "permission", revision: 1, value: {} } }),
           },
           permissionPresets: { catalog: async () => ({ ok: true, value: { options: [], defaultOptions: [], defaultPreset: "" } }) },
@@ -168,7 +190,17 @@ function loadPlugin({ bridge, search }) {
   };
   const ctx = {
     effect: runEffect,
-    inject: (names, callback) => { callback(scopeFor(names)); },
+    /*
+     * A nested `ctx.inject([...], cb)` for an ABSENT service never calls back.
+     * That is the real cordis behaviour and the reason a soft dependency is soft,
+     * so the stub must reproduce it rather than hand the callback a scope anyway:
+     * a stub that always calls back would hide a plugin that depends on a service
+     * the carrier does not compose.
+     */
+    inject: (names, callback) => {
+      if (names.some((name) => omit.includes(name))) return;
+      callback(scopeFor(names));
+    },
     locale: {
       register: (ns, dict) => { registeredDictionaries.set(ns, dict); return () => {}; },
       bind: () => (key) => key,
@@ -180,10 +212,30 @@ function loadPlugin({ bridge, search }) {
   plugin.apply(ctx);
 
   global.window = previousWindow;
-  const carrier = { bridge, search, windowKeydown, reloads, fetches, formReads, registrations, commands };
+  const carrier = { bridge, search, windowKeydown, reloads, fetches, formReads, registrations, commands, settingsReads };
   loaded.push(carrier);
   return carrier;
 }
+
+/**
+ * Render a component and drain its queued mount effects, like React does.
+ *
+ * The effect drain is not optional: the permissions panel starts its
+ * `remote.settings.describe()` from a mount effect, so a render that skips
+ * effects makes the panel look inert no matter how it is wired.
+ * @param component - the function component to render.
+ * @param props - props to pass.
+ * @returns the rendered tree.
+ */
+const renderWithEffects = (component, props) => {
+  hookSlots.clear();
+  ownerCounter = 0;
+  hookOwner = "c" + (++ownerCounter);
+  hookSlot = 0;
+  const tree = renderNode(component(props));
+  for (const effect of pendingEffects.splice(0, pendingEffects.length)) effect();
+  return tree;
+};
 
 // ---- renderer: expands function components exactly like React does ----
 const renderNode = (node) => {
@@ -220,6 +272,22 @@ const collect = (node, predicate, found = []) => {
     for (const child of childList(node)) collect(child, predicate, found);
   }
   return found;
+};
+/**
+ * Collect raw element nodes whose `type` satisfies a predicate.
+ *
+ * Distinct from {@link collect} because it inspects `type` rather than props,
+ * and because it must run on an UNRENDERED tree: `renderNode` expands function
+ * components, so a component reference is gone by the time it returns.
+ * @param node - element, array, or scalar produced by the React stub.
+ * @param predicate - receives each element's `type`.
+ * @returns matching elements in render order.
+ */
+const collectElements = (node, predicate) => {
+  if (node === null || node === undefined || typeof node !== "object") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => collectElements(child, predicate));
+  const self = node.$$el === true && predicate(node.type) ? [node] : [];
+  return [...self, ...collectElements(node.children, predicate)];
 };
 
 /** Render the settings page for one carrier. */
@@ -355,6 +423,63 @@ const EXPECTED_COMMANDS = [
     throw new Error("marker: Restart refused on a shell detected from the URL marker alone");
   }
 
+  // ---- carrier D: no Workspace registry at all ----
+  // `workspaces` is a SOFT dependency: the archive set only refines the
+  // permissions panel, so a carrier that does not compose it must still get the
+  // whole plugin. This is the assertion that keeps it out of the hard-gate
+  // `inject` array — there, a missing service would leave the plugin PENDING
+  // forever instead of merely hiding one refinement.
+  const noWorkspaces = loadPlugin({ bridge: false, search: "", omit: ["workspaces"] });
+  if (!noWorkspaces.registrations.has("hotkey-toolkit")) {
+    throw new Error("no-workspaces: the settings section was not registered; a missing optional service must not break activation");
+  }
+  if (!noWorkspaces.registrations.has("workspace-permissions")) {
+    throw new Error("no-workspaces: the permissions panel was not registered; it must survive an absent Workspace registry");
+  }
+  if (noWorkspaces.commands.size !== web.commands.size) {
+    throw new Error("no-workspaces: shortcut commands went missing with the Workspace registry absent");
+  }
+
+  // ---- carrier E: no settingsSchema service ----
+  // The panel's settings binding is deliberately injected WITHOUT `settingsSchema`
+  // now that the new-session defaults come from the Host catalog. If those two are
+  // ever re-coupled, a carrier lacking the schema service leaves the binding
+  // unfired and the panel permanently on "loading" — the same silent shape as the
+  // original `settingsScope` bug. The stub withholds the service AND refuses to
+  // call back for it, so re-coupling fails right here.
+  const noSchema = loadPlugin({ bridge: false, search: "", omit: ["settingsSchema"] });
+  const noSchemaPanel = noSchema.registrations.get("workspace-permissions");
+  if (noSchemaPanel === undefined) {
+    throw new Error("no-settings-schema: the permissions panel was not registered; its settings binding must not depend on settingsSchema");
+  }
+  /*
+   * Rendered WITH effect draining, because the panel starts its settings read
+   * from a mount effect. Inspect the RAW tree for the `PresetDropdown` component
+   * reference: `renderNode` expands function components, so the name is gone
+   * from the rendered output.
+   */
+  const noSchemaTree = renderWithEffects(noSchemaPanel, { t: (key) => key });
+  const noSchemaDropdowns = collectElements(noSchemaPanel({ t: (key) => key }),
+    (type) => typeof type === "function" && type.name === "PresetDropdown");
+  if (noSchemaDropdowns.length === 0) {
+    throw new Error("no-settings-schema: the panel rendered no preset dropdown without the schema service");
+  }
+  const noSchemaTriggers = collect(noSchemaTree, (entry) => hasClass(entry, "dshk-wpSelect"));
+  if (noSchemaTriggers.length === 0) {
+    throw new Error("no-settings-schema: the panel's dropdown produced no trigger; the settings binding did not run");
+  }
+  /*
+   * The direct evidence: rendering the panel must have driven
+   * `remote.settings.describe()`. Without the schema service the binding still
+   * fires, so this read happens; re-coupling the two leaves `settingsCtx` null,
+   * `load()` returns early, and this count stays ZERO.
+   */
+  await flush();
+  if (noSchema.settingsReads.length === 0) {
+    throw new Error("no-settings-schema: the panel never reached remote.settings.describe() without the schema "
+      + "service — its settings binding is coupled to settingsSchema again, which would hang the panel on 'loading'");
+  }
+
   // ---- dictionary parity: both locales must carry the same keys ----
   for (const ns of ["hotkeyToolkit", "hotkeyToolkit.seat"]) {
     const dict = registeredDictionaries.get(ns);
@@ -372,7 +497,8 @@ const EXPECTED_COMMANDS = [
   console.log(
     "platform ok: web commands=" + web.commands.size + " no-keydown-listener=1"
     + " desktop-bound-scope=1 detection=[bridge,marker] locale-parity=2"
-    + " web-defaults=0 refresh-unbound=1",
+    + " web-defaults=0 refresh-unbound=1"
+    + " soft-workspaces=1",
   );
 })().catch((error) => {
   console.error("platform FAILED:", error && error.stack ? error.stack : error);
