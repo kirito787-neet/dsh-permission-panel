@@ -36,38 +36,34 @@ window.__ModuleLoader__.load({
 		const zh = {
 			nav: "快捷键工具包",
 			title: "快捷键工具包",
-			intro: "全屏生效的快捷键：刷新界面、重启 DSH，以及切换窗口模式。改动即时生效，无需重载。",
-			introWeb: "全屏生效的快捷键：刷新界面。改动即时生效，无需重载。",
-			enable: "启用快捷键",
-			enableHint: "关闭后所有快捷键立即失效（模型搜索不受影响）。",
-			actionSection: "动作快捷键",
-			refresh: "刷新界面",
-			refreshHint: "重新加载渲染进程；插件与设置都会重新读取。",
-			restart: "重启 DSH",
-			restartHint: "重新启动 DSH Desktop 应用。",
-			modeSection: "模式切换快捷键",
-			modeHint: "切换窗口模式需要重启 DSH 才会生效；按下快捷键后会先保存设置，再自动重启。",
-			modeCompatibility: "兼容模式",
-			modeExtended: "扩展模式",
-			modeAdvanced: "增强模式",
-			current: "当前模式",
-			record: "录制",
-			recording: "请按下组合键…（Esc 取消）",
-			clear: "清除",
-			unset: "未设置",
-			conflict: "该组合键已被占用，请换一个。",
-			needModifier: "组合键至少需要 Ctrl / Alt / Win 之一。",
-			reset: "恢复默认",
-			saved: "已保存。",
-			savedRestarting: "模式已保存，DSH 正在重启…",
-			restarting: "DSH 正在重启…",
+			intro: "快捷键已并入官方「设置 → 快捷键」界面，可录制、可恢复默认。本页只保留插件自身的开关。",
+			introWeb: "快捷键已并入官方「设置 → 快捷键」界面。本页只保留插件自身的开关；重启与模式切换仅在 DSH Desktop 中可用。",
+			shortcutSection: "快捷键",
+			shortcutHint: "刷新界面、重启 DSH 与三个模式切换都已在官方快捷键列表中，可在「设置 → 快捷键」里查看与修改。",
+			shortcutRefreshNote: "「刷新界面」默认不绑定：Ctrl+R 已被官方「刷新页面」占用，请在上方界面自行指定组合键。",
+			openShortcuts: "打开快捷键设置",
+			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
+			cmdRefresh: "刷新界面（快捷键工具包）",
+			cmdRestart: "重启 DSH（快捷键工具包）",
+			cmdModeCompatibility: "切换到兼容模式（快捷键工具包）",
+			cmdModeExtended: "切换到扩展模式（快捷键工具包）",
+			cmdModeAdvanced: "切换到增强模式（快捷键工具包）",
+			cmdAliasRefresh: "刷新界面 重载 重新加载",
+			cmdAliasRestart: "重启 DSH 重新启动",
+			cmdAliasMode: "切换窗口模式 兼容 扩展 增强",
 			reloading: "正在刷新界面…",
-			modeApplied: "已切换到",
-			searchPlaceholder: "搜索模型…",
-			searchEmpty: "没有匹配的模型",
-			searchClear: "清除搜索",
+			restarting: "DSH 正在重启…",
+			savedRestarting: "模式已保存，DSH 正在重启…",
 			modeFailed: "模式切换失败：",
 			actionFailed: "操作失败：",
+			noShortcut: "快捷键未绑定或不可用。",
+			subpluginSection: "子插件",
+			modelSearch: "模型搜索",
+			modelSearchHint: "在模型列表里提供搜索框（保留原版两级菜单）。关闭后恢复官方原生模型菜单。",
+			modelSearchOff: "已关闭：正在使用官方原生模型菜单。",
+			desktopOnly: "该操作仅在 DSH Desktop 中可用。",
+			scopeUnavailable: "设置作用域不可用。",
+			webCarrierNote: "当前运行在浏览器（Web）载体中：重启 DSH 与窗口模式切换仅在 DSH Desktop 中可用，因此在官方快捷键列表里默认不绑定。",
 			wpNav: "工作区权限",
 			wpIntro: "查看并调整每个会话的工作区权限（沙盒模式 + 审批策略），并可设置新会话的默认权限；改动即时生效。",
 			wpSessionSection: "会话权限",
@@ -94,45 +90,38 @@ window.__ModuleLoader__.load({
 			wpAcknowledge: "我已了解风险，并愿意继续",
 			confirmEnable: "启用完全权限",
 			cancel: "取消",
-			desktopOnly: "该操作仅在 DSH Desktop 中可用。",
-			scopeUnavailable: "设置作用域不可用。",
-			webCarrierNote: "当前运行在浏览器（Web）载体中：刷新界面使用浏览器重新加载，重启 DSH 与窗口模式切换仅在 DSH Desktop 中可用，因此不在此显示。",
 		};
 		const en = {
 			nav: "Hotkey Toolkit",
 			title: "Hotkey Toolkit",
-			intro: "App-wide shortcuts: refresh the interface, restart DSH, and switch the window mode. Changes apply immediately, no reload needed.",
-			introWeb: "App-wide shortcuts: refresh the interface. Changes apply immediately, no reload needed.",
-			enable: "Enable shortcuts",
-			enableHint: "Turning this off disables every shortcut at once (model search is unaffected).",
-			actionSection: "Action shortcuts",
-			refresh: "Refresh interface",
-			refreshHint: "Reloads the renderer; plugins and settings are read again.",
-			restart: "Restart DSH",
-			restartHint: "Relaunches the DSH Desktop application.",
-			modeSection: "Mode switch shortcuts",
-			modeHint: "Switching the window mode requires a DSH restart; the shortcut saves the setting and then restarts automatically.",
-			modeCompatibility: "Compatibility mode",
-			modeExtended: "Extended mode",
-			modeAdvanced: "Advanced mode",
-			current: "Current mode",
-			record: "Record",
-			recording: "Press a combination… (Esc cancels)",
-			clear: "Clear",
-			unset: "Unset",
-			conflict: "That combination is already taken.",
-			needModifier: "A combination needs at least Ctrl / Alt / Win.",
-			reset: "Restore defaults",
-			saved: "Saved.",
-			savedRestarting: "Mode saved — DSH is restarting…",
-			restarting: "DSH is restarting…",
+			intro: "Shortcuts now live in the official Settings → Keyboard shortcuts dialog, where they can be recorded and restored to defaults. This page keeps only the plugin's own switches.",
+			introWeb: "Shortcuts now live in the official Settings → Keyboard shortcuts dialog. This page keeps only the plugin's own switches; Restart and the mode switches are available in DSH Desktop only.",
+			shortcutSection: "Shortcuts",
+			shortcutHint: "Refresh, Restart DSH, and the three mode switches are all in the official shortcut list, editable from Settings → Keyboard shortcuts.",
+			shortcutRefreshNote: "\"Refresh interface\" ships unbound: Ctrl+R already belongs to the official \"Refresh page\", so pick a combination for it in that dialog.",
+			openShortcuts: "Open keyboard shortcuts",
+			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
+			cmdRefresh: "Refresh interface (Hotkey Toolkit)",
+			cmdRestart: "Restart DSH (Hotkey Toolkit)",
+			cmdModeCompatibility: "Switch to Compatibility mode (Hotkey Toolkit)",
+			cmdModeExtended: "Switch to Extended mode (Hotkey Toolkit)",
+			cmdModeAdvanced: "Switch to Advanced mode (Hotkey Toolkit)",
+			cmdAliasRefresh: "refresh interface reload",
+			cmdAliasRestart: "restart DSH relaunch",
+			cmdAliasMode: "switch window mode compatibility extended advanced",
 			reloading: "Refreshing the interface…",
-			modeApplied: "Switched to",
-			searchPlaceholder: "Search models…",
-			searchEmpty: "No matching model",
-			searchClear: "Clear search",
+			restarting: "DSH is restarting…",
+			savedRestarting: "Mode saved — DSH is restarting…",
 			modeFailed: "Mode switch failed: ",
 			actionFailed: "Operation failed: ",
+			noShortcut: "The shortcut is unbound or unavailable.",
+			subpluginSection: "Sub-plugins",
+			modelSearch: "Model search",
+			modelSearchHint: "Adds a search box to the model list (keeping the shipped two-level menu). Turn it off to restore the official model menu.",
+			modelSearchOff: "Off — the official model menu is in use.",
+			desktopOnly: "This action is only available in DSH Desktop.",
+			scopeUnavailable: "Settings scope unavailable.",
+			webCarrierNote: "Running on the browser (Web) carrier: Restart DSH and the window-mode switches exist only in DSH Desktop, so they ship unbound in the official shortcut list.",
 			wpNav: "Workspace Permissions",
 			wpIntro: "View and adjust each session's workspace permissions (sandbox mode + approval policy), plus the default for new sessions. Changes apply immediately.",
 			wpSessionSection: "Session permissions",
@@ -159,9 +148,6 @@ window.__ModuleLoader__.load({
 			wpAcknowledge: "I understand the risks and want to continue",
 			confirmEnable: "Enable Full access",
 			cancel: "Cancel",
-			desktopOnly: "This action is only available in DSH Desktop.",
-			scopeUnavailable: "Settings scope unavailable.",
-			webCarrierNote: "Running on the browser (Web) carrier: refresh reloads the page, and Restart DSH plus the window-mode switches exist only in DSH Desktop, so they are hidden here.",
 		};
 
 		/** Plugin styles. Class names are prefixed dshk- to stay collision-free. */
@@ -284,66 +270,45 @@ window.__ModuleLoader__.load({
 
 		const MODE_IDS = ["compatibility", "extended", "advanced"];
 
-		/** Shipped defaults: every action reachable without colliding with browser defaults. */
+		/**
+		 * Shipped defaults for the preferences this plugin still owns itself.
+		 *
+		 * Keyboard bindings are deliberately ABSENT. They belong to the official
+		 * shortcut service now (`ctx.shortcuts.register`), which persists them in
+		 * the host's own document (Web: localStorage `dsh.keybindings.v1`; Desktop:
+		 * `userData/keybindings.json`) and edits them in 设置 → 快捷键. Keeping a
+		 * second copy here is exactly what let the old bespoke recorder drift out of
+		 * sync with the official one — two recorders, two stores, two answers to
+		 * "what is Ctrl+R bound to".
+		 *
+		 * `modelSearch` is the model-selector sub-plugin switch: ON, this plugin
+		 * shadows the official `conversation.input.model` seat with its searchable
+		 * menu; OFF, the seat is retired and the official two-level menu returns.
+		 */
 		const DEFAULT_CONFIG = {
-			enabled: true,
-			refresh: "Ctrl+R",
-			restart: "Ctrl+Shift+R",
-			modes: {
-				compatibility: "Ctrl+Alt+1",
-				extended: "Ctrl+Alt+2",
-				advanced: "Ctrl+Alt+3",
-			},
+			modelSearch: true,
 		};
 
-		/** Narrow one stored combo to a usable string, or null when unusable. */
-		function readCombo(value) {
-			return typeof value === "string" && value.length > 0 && value.length <= 64 ? value : null;
-		}
-
 		/**
-		 * Resolve one stored action field.
+		 * Merge a stored payload over the defaults.
 		 *
-		 * An ABSENT field keeps the shipped default; a present-but-unusable one (the
-		 * Clear button writes null) stays unbound. Collapsing the two onto readCombo
-		 * would resurrect the default the user just cleared.
-		 * @param container - the stored object holding the field.
-		 * @param field - field name.
-		 * @param fallback - the shipped default used when the field is absent.
-		 * @returns the bound combo, or null when the user cleared it.
+		 * Tolerant of the pre-1.5 payload (which carried `enabled`, `refresh`,
+		 * `restart`, and `modes`): those fields are simply ignored now, so an
+		 * existing profile upgrades without losing its model-search choice.
 		 */
-		function readField(container, field, fallback) {
-			if (!Object.prototype.hasOwnProperty.call(container, field)) return fallback;
-			return readCombo(container[field]);
-		}
-
-		/** Merge a stored payload over the defaults, rejecting malformed fields. */
 		function normalizeConfig(raw) {
-			const next = {
-				enabled: DEFAULT_CONFIG.enabled,
-				refresh: DEFAULT_CONFIG.refresh,
-				restart: DEFAULT_CONFIG.restart,
-				modes: {
-					compatibility: DEFAULT_CONFIG.modes.compatibility,
-					extended: DEFAULT_CONFIG.modes.extended,
-					advanced: DEFAULT_CONFIG.modes.advanced,
-				},
-			};
+			const next = { modelSearch: DEFAULT_CONFIG.modelSearch };
 			if (raw === null || typeof raw !== "object") return next;
-			if (typeof raw.enabled === "boolean") next.enabled = raw.enabled;
-			next.refresh = readField(raw, "refresh", DEFAULT_CONFIG.refresh);
-			next.restart = readField(raw, "restart", DEFAULT_CONFIG.restart);
-			if (raw.modes !== null && typeof raw.modes === "object") {
-				for (const id of MODE_IDS) next.modes[id] = readField(raw.modes, id, DEFAULT_CONFIG.modes[id]);
-			}
+			if (typeof raw.modelSearch === "boolean") next.modelSearch = raw.modelSearch;
 			return next;
 		}
 
 		/**
-		 * Shortcut preference store: one module-level snapshot so the settings page and
-		 * the global key handler always read the same value. Persistence rides
-		 * localStorage, mirroring the other client-only DSH plugins; the key handler
-		 * reads the live snapshot on every keystroke, so a change needs no rebind.
+		 * Plugin preference store: one module-level snapshot so the settings page and
+		 * the seat registrar always read the same value.
+		 *
+		 * This holds ONLY what the plugin owns. Keyboard bindings are not here — they
+		 * live in the host's shortcut document (see DEFAULT_CONFIG).
 		 */
 		function createConfigStore() {
 			let snapshot = DEFAULT_CONFIG;
@@ -370,98 +335,109 @@ window.__ModuleLoader__.load({
 					} catch {}
 					emit();
 				},
-				reset() {
-					snapshot = normalizeConfig(DEFAULT_CONFIG);
-					try {
-						window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-					} catch {}
-					emit();
-				},
 			};
 		}
 		const configStore = createConfigStore();
-		/** Subscribe React to the shortcut store. */
+		/** Subscribe React to the plugin preference store. */
 		function useConfig() {
 			return React.useSyncExternalStore((listener) => configStore.subscribe(listener), () => configStore.getSnapshot());
 		}
 
-		/** event.code values that are themselves modifiers (never a combo key). */
-		const MODIFIER_CODES = {
-			ControlLeft: "Ctrl",
-			ControlRight: "Ctrl",
-			AltLeft: "Alt",
-			AltRight: "Alt",
-			ShiftLeft: "Shift",
-			ShiftRight: "Shift",
-			MetaLeft: "Meta",
-			MetaRight: "Meta",
+		/**
+		 * Command ids this plugin contributes to the official shortcut service.
+		 *
+		 * The official `commandPattern` is
+		 * `/^[a-z][a-zA-Z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*)+$/u`, and — critically —
+		 * the renderer's `ShortcutRegistry.register()` does NOT enforce it, while the
+		 * persistence layer DOES. An id that misses the pattern therefore registers,
+		 * shows up editable, and then corrupts the whole shortcut document the first
+		 * time the user edits it (the read classifies the document `invalid` and the
+		 * settings UI goes permanently read-only). These ids are asserted against the
+		 * pattern at load time below, so a typo fails loudly and locally instead.
+		 */
+		const COMMAND_REFRESH = "hotkeyToolkit.refresh";
+		const COMMAND_RESTART = "hotkeyToolkit.restart";
+		const COMMAND_MODE = {
+			compatibility: "hotkeyToolkit.modeCompatibility",
+			extended: "hotkeyToolkit.modeExtended",
+			advanced: "hotkeyToolkit.modeAdvanced",
 		};
-		/** event.code to displayable key token, for codes whose name is not the token. */
-		const KEY_ALIASES = {
-			Space: "Space",
-			Comma: ",",
-			Period: ".",
-			Slash: "/",
-			Semicolon: ";",
-			Quote: "'",
-			BracketLeft: "[",
-			BracketRight: "]",
-			Minus: "-",
-			Equal: "=",
-			Backquote: "Backquote",
-			Backslash: "Backslash",
-			Enter: "Enter",
-			NumpadEnter: "Enter",
-			Tab: "Tab",
-			Delete: "Delete",
-			Backspace: "Backspace",
-			Insert: "Insert",
-			Home: "Home",
-			End: "End",
-			PageUp: "PageUp",
-			PageDown: "PageDown",
-			ArrowUp: "ArrowUp",
-			ArrowDown: "ArrowDown",
-			ArrowLeft: "ArrowLeft",
-			ArrowRight: "ArrowRight",
+		/** The official command-id grammar, mirrored so we can self-validate. */
+		const COMMAND_ID_PATTERN = /^[a-z][a-zA-Z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*)+$/u;
+
+		/**
+		 * Every command id this plugin contributes, as one list.
+		 *
+		 * Checked against `COMMAND_ID_PATTERN` at load time. This is not defensive
+		 * padding: the renderer's registry accepts a malformed id silently, and the
+		 * damage only appears later, when the user's first edit makes the persistence
+		 * layer classify the whole shortcut document `invalid` — which turns the
+		 * entire 设置 → 快捷键 page read-only and leaves the user's own file
+		 * unreadable. Failing loudly here costs one console error; failing there costs
+		 * the user every shortcut they ever customized.
+		 */
+		const COMMAND_IDS = [COMMAND_REFRESH, COMMAND_RESTART].concat(MODE_IDS.map((id) => COMMAND_MODE[id]));
+		for (const id of COMMAND_IDS) {
+			if (!COMMAND_ID_PATTERN.test(id)) {
+				throw new Error("hotkey-toolkit: command id " + JSON.stringify(id) + " violates the official shortcut grammar");
+			}
+		}
+
+		/**
+		 * Binding presets, chosen so registration can never throw.
+		 *
+		 * `ShortcutRegistry.register()` validates every declared default against
+		 * `normalizeBinding`, `isWebBindingAllowed`, `bindingIssue`, and the other
+		 * registered commands' defaults — for ALL SIX runtime:platform profiles at
+		 * once, not just the device in front of you. A throw there escapes through
+		 * `ctx.effect` and fails plugin activation outright, so the defaults matter
+		 * more than they look.
+		 *
+		 * Three constraints drive the shape below, each verified against the official
+		 * validators by `test/binding-audit.cjs`:
+		 *
+		 *  1. **Refresh ships NO default.** The official `page.refresh`
+		 *     (`ui-sidebar-right`) already owns `Ctrl+R`, and its Web twin owns
+		 *     `Ctrl+Alt+R`. Declaring either here would throw
+		 *     `Conflicting shortcut defaults`. The row still appears in
+		 *     设置 → 快捷键 and the user can bind it; that is strictly better than
+		 *     fighting the official command for a key it already owns.
+		 *  2. **Restart and the mode switches declare Desktop profiles only.** They
+		 *     are Desktop-only by nature — a browser carrier has no application to
+		 *     relaunch and no window mode to switch — so a Web default would advertise
+		 *     a binding that can never fire. It also sidesteps a genuine minefield:
+		 *     on Web, `Ctrl+Shift+R` is `session.rename`, `Ctrl+Alt+R` is
+		 *     `page.refresh`, and `web:linux` admits ONLY `Mod+/`,
+		 *     `Mod+Shift+,`, `Mod+Shift+.` — every other combination is rejected by
+		 *     `isWebBindingAllowed`. Omitting a profile is legal and means "unbound".
+		 *  3. The Desktop defaults stay on the combinations this plugin already
+		 *     shipped (`Ctrl+Shift+R`, `Ctrl+Alt+1/2/3`), which are free on all three
+		 *     Desktop platforms.
+		 */
+		const DESKTOP_BINDINGS = {
+			restart: { code: "KeyR", modifiers: ["primary", "shift"] },
+			compatibility: { code: "Digit1", modifiers: ["primary", "alt"] },
+			extended: { code: "Digit2", modifiers: ["primary", "alt"] },
+			advanced: { code: "Digit3", modifiers: ["primary", "alt"] },
 		};
 
-		/** Resolve one KeyboardEvent's non-modifier key token, or null for a bare modifier. */
-		function keyTokenOf(event) {
-			const code = typeof event.code === "string" ? event.code : "";
-			if (code === "" || MODIFIER_CODES[code] !== void 0) return null;
-			if (code.startsWith("Key") && code.length === 4) return code.slice(3).toUpperCase();
-			if (code.startsWith("Digit") && code.length === 6) return code.slice(5);
-			if (code.startsWith("Numpad") && code.length === 7) return code.slice(6);
-			if (/^F[0-9]{1,2}$/.test(code)) return code;
-			if (KEY_ALIASES[code] !== void 0) return KEY_ALIASES[code];
-			return code;
-		}
-
-		/** Canonicalise one keydown into a stable combo string, or null when unusable. */
-		function comboFromEvent(event) {
-			const token = keyTokenOf(event);
-			if (token === null) return null;
-			const parts = [];
-			if (event.ctrlKey) parts.push("Ctrl");
-			if (event.altKey) parts.push("Alt");
-			if (event.shiftKey) parts.push("Shift");
-			if (event.metaKey) parts.push("Meta");
-			if (parts.length === 0) return null;
-			return parts.concat([token]).join("+");
-		}
-
-		/** Whether a recorded combo is safe to bind: at least one strong modifier. */
-		function isBindable(combo) {
-			if (typeof combo !== "string" || combo.length === 0) return false;
-			const parts = combo.split("+");
-			return parts.includes("Ctrl") || parts.includes("Alt") || parts.includes("Meta");
-		}
-
-		/** Render one combo as keycaps. */
-		function keyCaps(combo, t) {
-			if (combo === null || combo === void 0 || combo === "") return React.createElement("span", { className: "dshk-key dshk-unset" }, t("unset"));
-			return combo.split("+").map((part, index) => React.createElement("span", { className: "dshk-key", key: index }, part));
+		/**
+		 * Expand one action into its `defaults` record.
+		 *
+		 * Desktop profiles get the shipped binding; Web profiles are deliberately
+		 * absent (see above). `test/binding-audit.cjs` re-derives this expansion and
+		 * proves every combination passes the official validators and collides with
+		 * no official core default.
+		 * @param action - key into `DESKTOP_BINDINGS`.
+		 * @returns the `defaults` record for `shortcuts.register`.
+		 */
+		function desktopBindingsFor(action) {
+			const binding = DESKTOP_BINDINGS[action];
+			return {
+				"desktop:macos": binding,
+				"desktop:windows": binding,
+				"desktop:linux": binding,
+			};
 		}
 
 		/**
@@ -616,171 +592,52 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		/** One recorded-shortcut row: label, optional hint, keycaps, and controls. */
-		function ShortcutRow(props) {
-			const { t, label, hint, combo, onRecord, recording, onClear } = props;
-			return React.createElement("div", { className: "dshk-row" }, [
-				React.createElement("div", { className: "dshk-rowCopy", key: "copy" }, [
-					React.createElement("div", { className: "dshk-rowLabel", key: "l" }, label),
-					hint !== void 0 && hint !== "" ? React.createElement("div", { className: "dshk-rowHint", key: "h" }, hint) : null,
-				]),
-				React.createElement("div", { className: "dshk-keys", key: "keys" }, [
-					recording
-						? React.createElement("span", { className: "dshk-key", key: "rec" }, t("recording"))
-						: React.createElement(React.Fragment, { key: "caps" }, keyCaps(combo, t)),
-					React.createElement("button", {
-						type: "button",
-						className: recording ? "dshk-btn dshk-recording" : "dshk-btn",
-						key: "btn",
-						onClick: onRecord,
-					}, recording ? t("recording") : t("record")),
-					React.createElement("button", {
-						type: "button",
-						className: "dshk-btn",
-						key: "clr",
-						onClick: onClear,
-					}, t("clear")),
-				]),
-			]);
-		}
-
 		/**
 		 * Settings page.
 		 *
-		 * Owns nothing but this plugin's own localStorage preferences: which combos are
-		 * bound, and whether the whole set is armed. Mode switching itself rides the
-		 * Desktop Host's settings; this page never writes them directly.
+		 * Deliberately small: keyboard recording is gone. It used to be a bespoke
+		 * recorder writing this plugin's own localStorage, which meant two recorders,
+		 * two stores, and two disagreeing answers to "what is Ctrl+R bound to". The
+		 * bindings now live in the official shortcut service and are edited in
+		 * 设置 → 快捷键, so this page only owns what is genuinely the plugin's:
+		 * the model-search sub-plugin switch, plus a pointer to the official dialog.
+		 *
+		 * The sub-plugin switch is read per render, not cached at activation: the same
+		 * bundle serves both carriers and the page can outlive an activation.
 		 */
 		function SettingsSection(props) {
 			const { t } = props;
 			const config = useConfig();
-			const [recording, setRecording] = React.useState(null);
-			const [problem, setProblem] = React.useState(null);
-			const mode = currentMode();
-			const modeLabel = mode === null ? null : t("mode" + mode.charAt(0).toUpperCase() + mode.slice(1));
-			/*
-			 * The Desktop-only rows are decided per render, not once at activation:
-			 * the same bundle is served to both carriers, so which rows exist is a
-			 * property of the page, and the page can outlive an activation.
-			 */
 			const desktop = hasDesktopHost();
-
-			/*
-			 * Stand the global listener down while this page captures a combination.
-			 * Both listeners sit in the window capture phase and the global one registered
-			 * first, so without this flag the OLD binding would fire mid-recording.
-			 */
-			React.useEffect(() => {
-				recordingActive = recording !== null;
-				return () => {
-					recordingActive = false;
-				};
-			}, [recording]);
-
-			React.useEffect(() => {
-				if (recording === null) return;
-				const onKeyDown = (event) => {
-					event.preventDefault();
-					event.stopPropagation();
-					if (event.key === "Escape") {
-						setRecording(null);
-						return;
-					}
-					const combo = comboFromEvent(event);
-					if (combo === null) return;
-					if (!isBindable(combo)) {
-						setProblem(t("needModifier"));
-						return;
-					}
-					const taken = [config.refresh, config.restart].concat(MODE_IDS.map((id) => config.modes[id]));
-					const others = taken.filter((entry) => entry !== null && entry !== recording.combo);
-					if (others.includes(combo)) {
-						setProblem(t("conflict"));
-						return;
-					}
-					setProblem(null);
-					if (recording.kind === "mode") configStore.update({ modes: { ...config.modes, [recording.mode]: combo } });
-					else configStore.update({ [recording.kind]: combo });
-					setRecording(null);
-				};
-				window.addEventListener("keydown", onKeyDown, true);
-				return () => {
-					window.removeEventListener("keydown", onKeyDown, true);
-				};
-			}, [recording, config, t]);
-
-			const record = (kind, combo, modeId) => {
-				setProblem(null);
-				setRecording(recording !== null && recording.kind === kind && recording.mode === modeId ? null : { kind, combo, mode: modeId });
-			};
-			const clear = (kind, modeId) => {
-				setProblem(null);
-				setRecording(null);
-				if (kind === "mode") configStore.update({ modes: { ...config.modes, [modeId]: null } });
-				else configStore.update({ [kind]: null });
-			};
-
-			const header = modeLabel === null ? t("actionSection") : t("actionSection") + " · " + t("current") + ": " + modeLabel;
 			return React.createElement("div", { className: "dshk-page" }, [
 				React.createElement("p", { className: "dshk-intro", key: "intro" }, desktop ? t("intro") : t("introWeb")),
-				React.createElement("div", { className: "dshk-card", key: "enable" }, React.createElement("div", { className: "dshk-row" }, [
-					React.createElement("div", { className: "dshk-rowCopy", key: "c" }, [
-						React.createElement("div", { className: "dshk-rowLabel", key: "l" }, t("enable")),
-						React.createElement("div", { className: "dshk-rowHint", key: "h" }, t("enableHint")),
-					]),
-					React.createElement("label", { className: "dshk-switch", key: "s" }, React.createElement("input", {
-						type: "checkbox",
-						checked: config.enabled,
-						onChange: (event) => configStore.update({ enabled: event.target.checked }),
-					})),
-				])),
-				React.createElement("div", { className: "dshk-card", key: "actions" }, [
-					React.createElement("h4", { key: "h" }, header),
-					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("refreshHint")),
-					React.createElement(ShortcutRow, {
-						key: "refresh",
-						t,
-						label: t("refresh"),
-						combo: config.refresh,
-						recording: recording !== null && recording.kind === "refresh",
-						onRecord: () => record("refresh", config.refresh),
-						onClear: () => clear("refresh"),
-					}),
-					desktop ? React.createElement(ShortcutRow, {
-						key: "restart",
-						t,
-						label: t("restart"),
-						combo: config.restart,
-						recording: recording !== null && recording.kind === "restart",
-						onRecord: () => record("restart", config.restart),
-						onClear: () => clear("restart"),
-					}) : null,
+				/*
+				 * Shortcut ownership note. This card is informational by design: it
+				 * explains where the shortcuts went and why Refresh ships unbound, so a
+				 * user who upgraded from the old page is not left hunting for the
+				 * recorder that used to be here.
+				 */
+				React.createElement("div", { className: "dshk-card", key: "shortcuts" }, [
+					React.createElement("h4", { key: "h" }, t("shortcutSection")),
+					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("shortcutHint")),
+					React.createElement("div", { className: "dshk-hint", key: "rn" }, t("shortcutRefreshNote")),
+					desktop ? null : React.createElement("div", { className: "dshk-hint dshk-platformNote", key: "pn" }, t("webCarrierNote")),
 				]),
-				desktop ? React.createElement("div", { className: "dshk-card", key: "modes" }, [
-					React.createElement("h4", { key: "h" }, t("modeSection")),
-					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("modeHint")),
-					...MODE_IDS.map((id) => React.createElement(ShortcutRow, {
-						key: id,
-						t,
-						label: t("mode" + id.charAt(0).toUpperCase() + id.slice(1)),
-						hint: mode === id ? t("current") : void 0,
-						combo: config.modes[id],
-						recording: recording !== null && recording.kind === "mode" && recording.mode === id,
-						onRecord: () => record("mode", config.modes[id], id),
-						onClear: () => clear("mode", id),
-					})),
-				]) : null,
-				desktop ? null : React.createElement("div", { className: "dshk-hint dshk-platformNote", key: "platform" }, t("webCarrierNote")),
-				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
-				React.createElement("div", { className: "dshk-card", key: "reset" }, React.createElement("button", {
-					type: "button",
-					className: "dshk-btn",
-					onClick: () => {
-						setRecording(null);
-						setProblem(null);
-						configStore.reset();
-					},
-				}, t("reset"))),
+				React.createElement("div", { className: "dshk-card", key: "subplugins" }, [
+					React.createElement("h4", { key: "h" }, t("subpluginSection")),
+					React.createElement("div", { className: "dshk-row", key: "modelSearch" }, [
+						React.createElement("div", { className: "dshk-rowCopy", key: "c" }, [
+							React.createElement("div", { className: "dshk-rowLabel", key: "l" }, t("modelSearch")),
+							React.createElement("div", { className: "dshk-rowHint", key: "h" }, t("modelSearchHint")),
+						]),
+						React.createElement("label", { className: "dshk-switch", key: "s" }, React.createElement("input", {
+							type: "checkbox",
+							checked: config.modelSearch,
+							onChange: (event) => configStore.update({ modelSearch: event.target.checked }),
+						})),
+					]),
+					config.modelSearch ? null : React.createElement("div", { className: "dshk-hint", key: "off" }, t("modelSearchOff")),
+				]),
 			]);
 		}
 
@@ -1569,18 +1426,19 @@ window.__ModuleLoader__.load({
 		 * `this.ctx.remote.session` through THIS fiber. Omitting them makes every
 		 * call throw `cannot get property "remote.session" without inject`, which
 		 * surfaces as a model list that never leaves its loading row.
+		 *
+		 * `shortcuts` is deliberately NOT listed here. It is injected lazily via
+		 * `ctx.inject(['shortcuts'], ...)` inside `apply`, so a carrier without the
+		 * shortcut service still gets the settings page, the permissions panel, and
+		 * the model seat instead of the whole plugin waiting forever for a service
+		 * that never arrives.
 		 */
 		const inject = ["locale", "remote", "remote.session", "sessions", "slots"];
 
 		/**
-		 * Set while the settings page is capturing a new combination, so the global
-		 * listener stands down instead of firing the old binding mid-recording.
-		 */
-		let recordingActive = false;
-
-		/**
-		 * Client plugin body: dictionary + stylesheet, the settings page, the global
-		 * shortcut listener, and the searchable model seat.
+		 * Client plugin body: dictionaries + stylesheet, the settings page, the
+		 * official shortcut commands, the permissions panel, and the searchable model
+		 * seat (itself gated behind the model-search sub-plugin switch).
 		 * @param ctx - client root context.
 		 */
 		function apply(ctx) {
@@ -1625,54 +1483,133 @@ window.__ModuleLoader__.load({
 			}, SettingsSection)), "hotkey-toolkit: settings page");
 
 			/*
-			 * Global shortcut listener.
+			 * Keyboard commands — contributed to the OFFICIAL shortcut service.
 			 *
-			 * Capture phase so a focused composer, editor, or plugin field cannot swallow
-			 * the combination first, and preventDefault so Chromium's own Ctrl+R never
-			 * races the Desktop-owned reload. The settings page suspends this listener
-			 * while it records a new combination.
+			 * This replaces the plugin's own global `keydown` listener. The official
+			 * service owns the whole lifecycle: physical-key matching, region and modal
+			 * arbitration, conflict detection, recording, and persistence (Web:
+			 * localStorage `dsh.keybindings.v1`; Desktop: `userData/keybindings.json`).
+			 * Every command registered here appears as an editable row in
+			 * 设置 → 快捷键 with no extra work, and a user edit is durable.
+			 *
+			 * `ctx.inject(['shortcuts'], ...)` rather than a top-level `inject` entry:
+			 * the shortcut service is optional from this plugin's point of view. If a
+			 * carrier ever ships without it, the settings page, the permissions panel,
+			 * and the model seat must still work — only the commands go missing.
+			 *
+			 * Registration is wrapped in a try/catch on purpose. `register()` validates
+			 * every declared default against all six runtime:platform profiles at once
+			 * and throws on a reserved key, a web-illegal combination, or an overlap
+			 * with another command's default; that throw would otherwise escape through
+			 * `ctx.effect` and fail plugin activation outright. A plugin that loses its
+			 * shortcuts is degraded; a plugin that refuses to load is broken.
 			 */
-			ctx.effect(() => {
-				const onKeyDown = (event) => {
-					if (recordingActive || event.repeat) return;
-					const config = configStore.getSnapshot();
-					if (!config.enabled) return;
-					const combo = comboFromEvent(event);
-					if (combo === null) return;
-					if (combo === config.refresh) {
-						event.preventDefault();
-						event.stopPropagation();
+			ctx.inject(["shortcuts"], (scope) => {
+				const shortcuts = scope.shortcuts;
+				/* A Localized label thunk: the registry re-reads it on every locale change. */
+				const label = (key) => () => translate(key);
+				/**
+				 * Register one command, refusing to let a validation failure propagate.
+				 * @param id - command id, already checked against the official grammar.
+				 * @param spec - label key, aliases, defaults, and the action.
+				 * @returns nothing; failures are reported once and dropped.
+				 */
+				const contribute = (id, spec) => {
+					scope.effect(() => {
+						try {
+							return shortcuts.register({
+								id,
+								label: label(spec.labelKey),
+								aliases: spec.aliases,
+								defaults: spec.defaults,
+								regions: spec.regions,
+								modals: spec.modals,
+								resolve: spec.resolve,
+							});
+						} catch (cause) {
+							/*
+							 * Degrade to "no shortcut" instead of taking the plugin down.
+							 * The settings page explains where shortcuts live, so the user
+							 * still has a path to the official dialog.
+							 */
+							console.error("hotkey-toolkit: could not register shortcut " + id, cause);
+							notify(text("actionFailed") + describe(cause));
+							return () => {};
+						}
+					}, "hotkey-toolkit: command " + id);
+				};
+
+				/*
+				 * Refresh interface — NO default binding, by design.
+				 *
+				 * `Ctrl+R` is already the official `page.refresh` (ui-sidebar-right), and
+				 * its Web twin owns `Ctrl+Alt+R`. Declaring either here would throw
+				 * `Conflicting shortcut defaults` and, worse, would mean two commands
+				 * fighting over one key. The row still appears in the official dialog and
+				 * the user binds it there; `test/binding-audit.cjs` pins this decision.
+				 */
+				contribute(COMMAND_REFRESH, {
+					labelKey: "cmdRefresh",
+					aliases: [translate("cmdAliasRefresh"), "refresh", "reload"],
+					defaults: {},
+					regions: ["page", "editable", "terminal"],
+					modals: ["settings", "shortcuts"],
+					resolve: () => ({ status: "handled", run: () => {
 						refreshInterface().catch((cause) => notify(text("actionFailed") + describe(cause)));
-						return;
-					}
-					/*
-					 * Restart and the mode switches are Desktop-only. Their rows are
-					 * hidden on a browser carrier, but a binding recorded earlier (or
-					 * synced from another profile) can still match, so the actions
-					 * themselves refuse rather than firing at an absent endpoint.
-					 */
-					if (combo === config.restart) {
-						if (!hasDesktopHost()) return;
-						event.preventDefault();
-						event.stopPropagation();
-						restartApplication().catch((cause) => notify(text("actionFailed") + describe(cause)));
-						return;
-					}
-					if (!hasDesktopHost()) return;
-					for (const mode of MODE_IDS) {
-						if (combo !== config.modes[mode]) continue;
-						if (currentMode() === mode) return;
-						event.preventDefault();
-						event.stopPropagation();
-						switchMode(modeScope, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
-						return;
-					}
-				};
-				window.addEventListener("keydown", onKeyDown, true);
-				return () => {
-					window.removeEventListener("keydown", onKeyDown, true);
-				};
-			}, "hotkey-toolkit: global shortcuts");
+					} }),
+				});
+
+				/*
+				 * Restart DSH — Desktop-only.
+				 *
+				 * The defaults are declared for Desktop profiles only. A Web default
+				 * would advertise a binding that can never fire (there is no application
+				 * to relaunch), and it would also be a real hazard: on Web
+				 * `Ctrl+Shift+R` is `session.rename` and `Ctrl+Alt+R` is `page.refresh`,
+				 * while `web:linux` admits only `Mod+/`, `Mod+Shift+,`, `Mod+Shift+.`.
+				 * Omitting a profile is legal and simply means "unbound".
+				 *
+				 * `resolve` refuses on a browser carrier even when a binding exists —
+				 * the binding may have been recorded on Desktop and synced, and firing a
+				 * request at an endpoint this carrier does not serve is worse than
+				 * doing nothing.
+				 */
+				contribute(COMMAND_RESTART, {
+					labelKey: "cmdRestart",
+					aliases: [translate("cmdAliasRestart"), "restart", "relaunch"],
+					defaults: desktopBindingsFor("restart"),
+					regions: ["page", "editable", "terminal"],
+					modals: ["settings", "shortcuts"],
+					resolve: () => {
+						if (!hasDesktopHost()) return { status: "blocked", reason: text("desktopOnly") };
+						return { status: "handled", run: () => {
+							restartApplication().catch((cause) => notify(text("actionFailed") + describe(cause)));
+						} };
+					},
+				});
+
+				/* The three window-mode switches, Desktop-only for the same reasons. */
+				for (const mode of MODE_IDS) {
+					contribute(COMMAND_MODE[mode], {
+						labelKey: "cmdMode" + mode.charAt(0).toUpperCase() + mode.slice(1),
+						aliases: [translate("cmdAliasMode"), mode],
+						defaults: desktopBindingsFor(mode),
+						regions: ["page", "editable", "terminal"],
+						modals: ["settings", "shortcuts"],
+						resolve: () => {
+							if (!hasDesktopHost()) return { status: "blocked", reason: text("desktopOnly") };
+							/* Already in this mode: nothing to do, but do not consume the key. */
+							if (currentMode() === mode) return { status: "pass" };
+							/* The scope is bound lazily; report rather than throw if absent. */
+							if (modeScope === void 0 || modeScope === null) return { status: "blocked", reason: text("scopeUnavailable") };
+							const bound = modeScope;
+							return { status: "handled", run: () => {
+								switchMode(bound, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
+							} };
+						},
+					});
+				}
+			});
 
 			/*
 		 * Permissions panel state: the default-preset cell (settings mirror read +
@@ -2156,12 +2093,37 @@ window.__ModuleLoader__.load({
 			label: () => translate("wpNav"),
 			locale: NS,
 		}, PermissionsSection)), "hotkey-toolkit: permissions panel");
+		/*
+		 * Model search — a TOGGLEABLE sub-plugin.
+		 *
+		 * The seat shadows the official `conversation.input.model` cell with a
+		 * searchable menu. That is a real trade (the official menu is replaced
+		 * wholesale), so it is the user's call, not an unconditional takeover.
+		 *
+		 * Mechanism. `slots.inject()` returns a disposer, and the dynamic facade
+		 * assigns a page-local priority LOWER than every shipped entry, so a
+		 * registration into this single cell wins it automatically — no `priority`
+		 * needed (passing one would be overwritten anyway). Registering installs the
+		 * seat; disposing it retires the seat and the official ModelSelect re-renders
+		 * in the same cell, because the cell falls to its next live survivor.
+		 *
+		 * A disposed `slots.inject` handle cannot be re-armed, so the toggle re-arms by
+		 * calling `slots.inject` again. The preference is read on every flip and also
+		 * subscribed to, so the switch in 设置 → 插件 takes effect immediately.
+		 *
+		 * Failing safe: if the seat ever crashes, the slot runtime abdicates it and the
+		 * official menu returns on its own — the same end state as turning the switch
+		 * off. This is why the seat is a sub-plugin at all.
+		 */
 		ctx.inject(["slots", "modelDirectories", "sessions"], (scope) => {
-				const models = scope.modelDirectories;
-				const sessions = scope.sessions;
-				scope.slots.inject("conversation.input.model", () => scope.slots.register({
+			const models = scope.modelDirectories;
+			const sessions = scope.sessions;
+			/** The live seat registration's disposer, or null while the seat is retired. */
+			let seatOff = null;
+			/** Register the seat. Safe to call only while no registration is live. */
+			const mountSeat = () => {
+				seatOff = scope.slots.inject("conversation.input.model", () => scope.slots.register({
 					name: "conversation.input.model",
-					priority: -1,
 					locale: SEAT_NS,
 					inject: (sessionId) => {
 						/*
@@ -2196,8 +2158,27 @@ window.__ModuleLoader__.load({
 						};
 					},
 				}, ModelSelect));
-			});
-		}
+			};
+			/** Retire the seat, handing the cell back to the official menu. */
+			const unmountSeat = () => {
+				if (seatOff === null) return;
+				const off = seatOff;
+				seatOff = null;
+				off();
+			};
+			/** Bring the live seat in line with the stored preference. */
+			const syncSeat = () => {
+				const wanted = configStore.getSnapshot().modelSearch;
+				if (wanted && seatOff === null) mountSeat();
+				else if (!wanted && seatOff !== null) unmountSeat();
+			};
+			/* Apply the stored preference now, then follow every later flip. */
+			syncSeat();
+			scope.effect(() => configStore.subscribe(syncSeat), "hotkey-toolkit: model-search switch");
+			/* Release the seat with the plugin fiber even if the switch is left on. */
+			scope.effect(() => () => { unmountSeat(); }, "hotkey-toolkit: model-search seat teardown");
+		});
+	}
 
 		exports.apply = apply;
 		exports.inject = inject;

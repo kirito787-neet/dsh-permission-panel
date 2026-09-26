@@ -2,16 +2,20 @@
  * Carrier test: the same bundle must serve both the DSH Desktop shell and a
  * plain browser (`dsh web`).
  *
- * The Desktop-only surface (Restart DSH, the window-mode switches, and the
- * `dsh-desktop` settings namespace) does not exist on a browser carrier, so the
- * plugin has to detect the shell and degrade: hide those rows, keep Refresh
- * working through a plain page reload, and never bind a scope it cannot serve.
- * Getting this wrong is not cosmetic — `switchMode` writing a namespace the
- * carrier does not own, or `restartApplication` posting to an endpoint only the
- * Electron main process serves, fails at the worst moment (a keystroke).
+ * Two things are carrier-dependent now.
  *
- * Renders the real client.js through a stubbed module loader, once with the
- * Desktop bridge installed and once without, and asserts what each carrier sees.
+ * 1. **The Desktop-only commands.** Restart DSH and the three window-mode
+ *    switches are contributed to the OFFICIAL shortcut service with Desktop
+ *    profiles only, and their `resolve` refuses on a browser carrier. The plugin
+ *    no longer runs its own `keydown` listener, so "does the key do anything" is
+ *    no longer a question about a listener — it is a question about what the
+ *    registered command resolves to, and about which profiles carry a default.
+ * 2. **The `dsh-desktop` settings scope.** It is Desktop-owned; binding it on a
+ *    browser carrier would subscribe to a namespace that has no settings row.
+ *
+ * The suite renders the real client.js through a stubbed module loader, once with
+ * the Desktop bridge installed, once with only the URL marker, and once with
+ * neither, and asserts what each carrier contributes.
  *
  * Usage: node test/platform.cjs [path/to/client.js]
  */
@@ -67,6 +71,9 @@ const requireStub = (id) => {
   throw new Error("unexpected require: " + id);
 };
 
+/** Minimal cordis effect: run the body, keep its disposer. */
+const runEffect = (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; };
+
 /**
  * Load the plugin against one carrier.
  *
@@ -74,10 +81,14 @@ const requireStub = (id) => {
  * window URL query, which carries the Electron-owned mode marker.
  */
 function loadPlugin({ bridge, search }) {
-  const windowKeydown = [];
   const reloads = [];
   const fetches = [];
   const bindCalls = [];
+  const commands = new Map();
+  const registrations = new Map();
+  // The plugin must NOT install a global keydown listener any more; capturing
+  // them here lets the suite assert that directly.
+  const windowKeydown = [];
 
   const fakeWindow = {
     __ModuleLoader__: { load: (definition) => { captured = definition; } },
@@ -102,7 +113,6 @@ function loadPlugin({ bridge, search }) {
   new Function("require", "window", "document", source)(requireStub, fakeWindow, global.document);
   if (captured === null) throw new Error("client.js never called __ModuleLoader__.load");
 
-  const registrations = new Map();
   const settingsScope = {
     settingsScope: {
       bind: (spec) => { bindCalls.push(spec); return { set: async () => {} }; },
@@ -116,21 +126,29 @@ function loadPlugin({ bridge, search }) {
     subagentAddress: () => undefined,
   };
   const slotsService = {
-    inject: (name, factory) => factory(),
+    inject: (name, factory) => { factory(); return () => {}; },
     register: (options, component) => { registrations.set(options.id, component); return () => {}; },
   };
+  const shortcutsService = {
+    register: (command) => { commands.set(command.id, command); return () => { commands.delete(command.id); }; },
+  };
+  const scopeFor = (names) => {
+    const scope = { effect: runEffect };
+    if (names.includes("settingsScope")) Object.assign(scope, settingsScope);
+    if (names.includes("modelDirectories")) {
+      Object.assign(scope, {
+        // Must never be called during activation; the seat resolves it lazily.
+        modelDirectories: { directoryFor: () => { throw new Error("directoryFor must not be called during activation"); } },
+        sessions: sessionsService, slots: slotsService,
+      });
+    } else if (names.includes("sessions")) Object.assign(scope, { sessions: sessionsService });
+    if (names.includes("shortcuts")) Object.assign(scope, { shortcuts: shortcutsService });
+    if (names.includes("slots")) Object.assign(scope, { slots: slotsService });
+    return scope;
+  };
   const ctx = {
-    effect: (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; },
-    inject: (names, callback) => {
-      if (names.includes("settingsScope")) callback(settingsScope);
-      // The seat asks for all three together; it needs a slots face and a
-      // modelDirectories face whose directoryFor is never called eagerly.
-      else if (names.includes("modelDirectories")) {
-        callback({ modelDirectories: { directoryFor: () => { throw new Error("directoryFor must not be called during activation"); } }, sessions: sessionsService, slots: slotsService });
-      } else if (names.includes("sessions")) {
-        callback({ sessions: sessionsService });
-      }
-    },
+    effect: runEffect,
+    inject: (names, callback) => { callback(scopeFor(names)); },
     locale: {
       register: (ns, dict) => { registeredDictionaries.set(ns, dict); return () => {}; },
       bind: () => (key) => key,
@@ -142,8 +160,9 @@ function loadPlugin({ bridge, search }) {
   plugin.apply(ctx);
 
   global.window = previousWindow;
-  loaded.push({ bridge, search, windowKeydown, reloads, fetches, bindCalls, registrations });
-  return loaded[loaded.length - 1];
+  const carrier = { bridge, search, windowKeydown, reloads, fetches, bindCalls, registrations, commands };
+  loaded.push(carrier);
+  return carrier;
 }
 
 // ---- renderer: expands function components exactly like React does ----
@@ -182,10 +201,6 @@ const collect = (node, predicate, found = []) => {
   }
   return found;
 };
-/** Every rendered shortcut-row label, in order. */
-const rowLabels = (tree) => collect(tree, (entry) => entry.props?.className === "dshk-row")
-  .map((row) => collect(row, (entry) => entry.props?.className === "dshk-rowLabel").map(explain).join(""))
-  .filter((label) => label.length > 0);
 
 /** Render the settings page for one carrier. */
 const renderSettings = (carrier) => {
@@ -200,91 +215,125 @@ const renderSettings = (carrier) => {
   for (const effect of effects) effect();
   return tree;
 };
+/** The switch rows on the settings page, keyed by their label text. */
+const switchLabels = (tree) => collect(tree, (entry) => hasClass(entry, "dshk-row"))
+  .map((row) => collect(row, (entry) => hasClass(entry, "dshk-rowLabel")).map(explain).join(""))
+  .filter((label) => label.length > 0);
 
-/** Press one combination against the plugin's global listener. */
-const press = (carrier, event) => {
-  if (carrier.windowKeydown.length === 0) throw new Error("the plugin registered no global keydown listener");
-  const full = {
-    repeat: false,
-    ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
-    preventDefault() { full.defaultPrevented = true; },
-    stopPropagation() {},
-    defaultPrevented: false,
-    ...event,
-  };
-  for (const listener of carrier.windowKeydown.slice()) listener(full);
-  return full;
-};
 const flush = async () => { for (let turn = 0; turn < 8; turn++) await Promise.resolve(); };
+
+/** The exact set of command ids the plugin contributes to the official service. */
+const EXPECTED_COMMANDS = [
+  "hotkeyToolkit.refresh",
+  "hotkeyToolkit.restart",
+  "hotkeyToolkit.modeCompatibility",
+  "hotkeyToolkit.modeExtended",
+  "hotkeyToolkit.modeAdvanced",
+];
 
 (async () => {
   // ---- carrier A: a plain browser, no Desktop bridge and no mode marker ----
   const web = loadPlugin({ bridge: false, search: "" });
-  const webTree = renderSettings(web);
-  const webRows = rowLabels(webTree);
 
-  if (!webRows.includes("refresh")) throw new Error("web: the Refresh row is missing; saw " + JSON.stringify(webRows));
-  if (webRows.includes("restart")) throw new Error("web: the Restart DSH row is offered on a carrier that cannot restart it");
-  for (const mode of ["modeCompatibility", "modeExtended", "modeAdvanced"]) {
-    if (webRows.includes(mode)) throw new Error("web: the " + mode + " row is offered without the Desktop shell; saw " + JSON.stringify(webRows));
+  // The plugin must no longer own a global key listener: the official shortcut
+  // service is the single keyboard owner now.
+  if (web.windowKeydown.length !== 0) {
+    throw new Error("web: the plugin still installs its own global keydown listener; the official shortcut service must own the keyboard");
   }
-  if (collect(webTree, (entry) => hasClass(entry, "dshk-platformNote")).length !== 1) {
-    throw new Error("web: the page does not explain which rows are Desktop-only");
+
+  // Every command is contributed, on every carrier, so the official list is complete.
+  for (const id of EXPECTED_COMMANDS) {
+    if (!web.commands.has(id)) throw new Error("web: command " + id + " was not contributed to the official shortcut service");
   }
-  // The intro must not advertise actions the carrier cannot perform.
-  const webIntro = collect(webTree, (entry) => hasClass(entry, "dshk-intro")).map(explain).join("");
-  if (webIntro !== "introWeb") throw new Error("web: the intro still advertises Desktop-only actions; saw " + JSON.stringify(webIntro));
+
+  // Desktop-only commands must ship NO web default: a web binding would advertise
+  // a key that can never fire (and would collide with official web bindings).
+  for (const id of ["hotkeyToolkit.restart", "hotkeyToolkit.modeCompatibility", "hotkeyToolkit.modeExtended", "hotkeyToolkit.modeAdvanced"]) {
+    const defaults = web.commands.get(id).defaults;
+    const webProfiles = Object.keys(defaults).filter((profile) => profile.startsWith("web:"));
+    if (webProfiles.length !== 0) {
+      throw new Error("web: " + id + " declares web defaults " + JSON.stringify(webProfiles) + "; Desktop-only commands must omit them");
+    }
+    if (Object.keys(defaults).length === 0) {
+      throw new Error("web: " + id + " lost its Desktop defaults entirely");
+    }
+  }
+
+  // Refresh ships unbound on purpose (Ctrl+R belongs to the official page.refresh).
+  if (Object.keys(web.commands.get("hotkeyToolkit.refresh").defaults).length !== 0) {
+    throw new Error("web: Refresh declares a default binding; it must stay unbound so it cannot collide with the official page.refresh");
+  }
+
+  // On a browser carrier the Desktop-only actions must REFUSE, not fire.
+  for (const id of ["hotkeyToolkit.restart", "hotkeyToolkit.modeCompatibility", "hotkeyToolkit.modeExtended", "hotkeyToolkit.modeAdvanced"]) {
+    const result = web.commands.get(id).resolve({ region: "page", modal: null, target: null });
+    if (result.status !== "blocked") {
+      throw new Error("web: " + id + " resolved to " + result.status + " on a browser carrier; it must refuse");
+    }
+  }
+
   // The `dsh-desktop` namespace is Desktop-owned; binding it on a browser
   // carrier would subscribe to a namespace that has no settings row.
   if (web.bindCalls.length !== 0) throw new Error("web: bound the dsh-desktop settings scope without the Desktop shell");
 
-  // ---- carrier A: Refresh falls back to a page reload ----
-  press(web, { code: "KeyR", ctrlKey: true });
+  // Refresh still works on the web carrier, via a page reload rather than a
+  // Desktop endpoint. The command is unbound by default, so it is invoked the way
+  // the official service invokes a command.
+  const webRefresh = web.commands.get("hotkeyToolkit.refresh").resolve({ region: "page", modal: null, target: null });
+  if (webRefresh.status !== "handled") throw new Error("web: Refresh did not resolve as handled");
+  webRefresh.run();
   await flush();
-  if (web.reloads.length !== 1) throw new Error("web: the Refresh shortcut did not reload the page (reloads=" + web.reloads.length + ")");
+  if (web.reloads.length !== 1) throw new Error("web: Refresh did not reload the page (reloads=" + web.reloads.length + ")");
   if (web.fetches.length !== 0) throw new Error("web: Refresh posted to a Desktop endpoint that does not exist; saw " + JSON.stringify(web.fetches.map((call) => call.url)));
 
-  // ---- carrier A: a stale Restart binding must be inert, not a failed request ----
-  press(web, { code: "KeyR", ctrlKey: true, shiftKey: true });
-  await flush();
-  if (web.fetches.length !== 0) throw new Error("web: the Restart binding reached the network; saw " + JSON.stringify(web.fetches.map((call) => call.url)));
-  if (web.reloads.length !== 1) throw new Error("web: the Restart binding reloaded the page");
-
-  // ---- carrier A: a stale mode binding must not write the Desktop namespace ----
-  press(web, { code: "Digit2", ctrlKey: true, altKey: true });
-  await flush();
-  if (web.fetches.length !== 0) throw new Error("web: a mode binding reached the network");
+  // ---- carrier A: the settings page reflects the new, smaller surface ----
+  const webTree = renderSettings(web);
+  const webSwitches = switchLabels(webTree);
+  if (!webSwitches.includes("modelSearch")) {
+    throw new Error("web: the model-search sub-plugin switch is missing; saw " + JSON.stringify(webSwitches));
+  }
+  // The old recorder is gone: no recording/enable rows must reappear.
+  const webText = explain(webTree);
+  for (const stale of ["enable", "record", "reset"]) {
+    if (webText.includes(stale)) throw new Error("web: the retired shortcut recorder still renders '" + stale + "'");
+  }
+  if (collect(webTree, (entry) => hasClass(entry, "dshk-platformNote")).length !== 1) {
+    throw new Error("web: the page does not explain which rows are Desktop-only");
+  }
 
   // ---- carrier B: the Desktop shell, detected through its preload bridge ----
   const desktop = loadPlugin({ bridge: true, search: "" });
-  const desktopTree = renderSettings(desktop);
-  const desktopRows = rowLabels(desktopTree);
-  if (!desktopRows.includes("refresh")) throw new Error("desktop: the Refresh row is missing; saw " + JSON.stringify(desktopRows));
-  if (!desktopRows.includes("restart")) throw new Error("desktop: the Restart DSH row disappeared under the shell; saw " + JSON.stringify(desktopRows));
-  for (const mode of ["modeCompatibility", "modeExtended", "modeAdvanced"]) {
-    if (!desktopRows.includes(mode)) throw new Error("desktop: the " + mode + " row is missing under the shell; saw " + JSON.stringify(desktopRows));
+  for (const id of EXPECTED_COMMANDS) {
+    if (!desktop.commands.has(id)) throw new Error("desktop: command " + id + " was not contributed");
   }
-  if (collect(desktopTree, (entry) => hasClass(entry, "dshk-platformNote")).length !== 0) {
-    throw new Error("desktop: the browser-carrier note is shown under the shell");
+  // Restart carries its Desktop default here.
+  const restartDefaults = desktop.commands.get("hotkeyToolkit.restart").defaults;
+  for (const profile of ["desktop:macos", "desktop:windows", "desktop:linux"]) {
+    if (restartDefaults[profile] === undefined) throw new Error("desktop: Restart has no default for " + profile);
   }
-  const desktopIntro = collect(desktopTree, (entry) => hasClass(entry, "dshk-intro")).map(explain).join("");
-  if (desktopIntro !== "intro") throw new Error("desktop: the intro does not describe the shell's full action set; saw " + JSON.stringify(desktopIntro));
   if (desktop.bindCalls.length !== 1 || desktop.bindCalls[0].namespace !== "dsh-desktop") {
     throw new Error("desktop: the dsh-desktop settings scope was not bound exactly once; saw " + JSON.stringify(desktop.bindCalls));
   }
-  // Refresh must ride the Desktop action, not a raw page reload.
-  press(desktop, { code: "KeyR", ctrlKey: true });
+  // Under the shell, Refresh rides the Desktop action rather than a page reload.
+  const desktopRefresh = desktop.commands.get("hotkeyToolkit.refresh").resolve({ region: "page", modal: null, target: null });
+  desktopRefresh.run();
   await flush();
   if (desktop.reloads.length !== 0) throw new Error("desktop: Refresh used a browser reload instead of the Desktop action");
+
+  const desktopTree = renderSettings(desktop);
+  if (collect(desktopTree, (entry) => hasClass(entry, "dshk-platformNote")).length !== 0) {
+    throw new Error("desktop: the browser-carrier note is shown under the shell");
+  }
 
   // ---- carrier C: the shell, detected through the URL marker alone ----
   // The bridge and the marker are independent signals; a generation that ships
   // only one of them must still be recognised as the shell.
   const marker = loadPlugin({ bridge: false, search: "?dsh-desktop-mode=extended" });
-  const markerTree = renderSettings(marker);
-  const markerRows = rowLabels(markerTree);
-  if (!markerRows.includes("restart")) throw new Error("marker: the Desktop shell was not detected from the URL marker alone");
   if (marker.bindCalls.length !== 1) throw new Error("marker: the dsh-desktop settings scope was not bound");
+  const markerRestart = marker.commands.get("hotkeyToolkit.restart").resolve({ region: "page", modal: null, target: null });
+  if (markerRestart.status !== "handled") {
+    throw new Error("marker: Restart refused on a shell detected from the URL marker alone");
+  }
 
   // ---- dictionary parity: both locales must carry the same keys ----
   for (const ns of ["hotkeyToolkit", "hotkeyToolkit.seat"]) {
@@ -301,9 +350,9 @@ const flush = async () => { for (let turn = 0; turn < 8; turn++) await Promise.r
   }
 
   console.log(
-    "platform ok: web rows=" + JSON.stringify(webRows) +
-    " reload-fallback=1 desktop rows=" + desktopRows.length +
-    " detection=[bridge,marker] locale-parity=2",
+    "platform ok: web commands=" + web.commands.size + " no-keydown-listener=1"
+    + " desktop-bound-scope=1 detection=[bridge,marker] locale-parity=2"
+    + " web-defaults=0 refresh-unbound=1",
   );
 })().catch((error) => {
   console.error("platform FAILED:", error && error.stack ? error.stack : error);

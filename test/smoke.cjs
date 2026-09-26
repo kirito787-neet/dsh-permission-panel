@@ -122,7 +122,10 @@ const settingsView = {
   namespaces: [{ ns: "permission", revision: 1, schema: {}, value: { defaultPreset: "workspace-write" } }],
 };
 const registrations = new Map();
+/** Minimal cordis effect: run the body, keep its disposer. */
+const runEffect = (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; };
 const fakeScope = {
+  effect: runEffect,
   settingsScope: {
     bind: () => ({ set: async () => {} }),
     describe: () => ({
@@ -143,18 +146,16 @@ const fakeScope = {
     ] }),
   },
   sessions,
+  shortcuts: { register: () => () => {} },
   slots: {
-    inject: (name, factory) => factory(),
+    inject: (name, factory) => { factory(); return () => {}; },
     register: (options, component) => { registrations.set(options.id, component); return () => {}; },
   },
 };
 const ctx = {
   // Effects run their body immediately (this is how the plugin registers its
   // settings sections); the returned disposer is what gets kept.
-  effect: (body) => {
-    const dispose = body();
-    return typeof dispose === "function" ? dispose : () => {};
-  },
+  effect: runEffect,
   inject: (names, callback) => { callback(fakeScope); },
   locale: { register: () => () => {}, bind: () => (key) => key },
   slots: fakeScope.slots,

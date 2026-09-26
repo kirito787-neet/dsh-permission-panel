@@ -130,19 +130,28 @@ const seatProps = {
 };
 
 const registrations = new Map();
+// Shortcut commands the plugin contributes to the OFFICIAL service. Captured so
+// the suite can assert the plugin no longer runs its own keydown listener.
+const shortcutCommands = new Map();
+/** Minimal cordis effect: run the body, keep its disposer. */
+const runEffect = (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; };
 const fakeScope = {
+  effect: runEffect,
   settingsScope: { bind: () => ({ set: async () => {} }), describe: () => ({ subscribe: () => () => {}, ensure: async () => {}, getSnapshot: () => ({ status: "unavailable", error: null }), acceptView: () => {} }) },
   remote: { settings: { mutate: async () => ({ ok: true, value: {} }) } },
   settingsSchema: { describe: () => ({ namespaces: [] }), rehydrate: (v) => v, nodeAtPath: () => undefined },
   sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ ids: [], byId: {}, phase: "ready" }) }, binding: () => undefined, refresh: async () => {}, subagentAddress: () => undefined },
   modelDirectories: { directoryFor: () => ({ store: directory, load: () => Promise.resolve(), select: seatProps.select }) },
+  shortcuts: {
+    register: (command) => { shortcutCommands.set(command.id, command); return () => { shortcutCommands.delete(command.id); }; },
+  },
   slots: {
-    inject: (name, factory) => factory(),
+    inject: (name, factory) => { factory(); return () => {}; },
     register: (options, component) => { registrations.set(options.name, component); return () => {}; },
   },
 };
 const ctx = {
-  effect: (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; },
+  effect: runEffect,
   inject: (names, callback) => { callback(fakeScope); },
   locale: { register: () => () => {}, bind: () => (key) => key },
   slots: fakeScope.slots,

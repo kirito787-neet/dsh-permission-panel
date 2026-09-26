@@ -1,7 +1,7 @@
 {
   "name": "dsh-hotkey-toolkit",
-  "version": "1.4.0",
-  "description": "DSH 快捷键工具包（Web / Desktop 双载体）：Ctrl+R 刷新界面、Ctrl+Shift+R 重启 DSH、可自定义组合键切换兼容/扩展/增强模式，保留原版两级模型菜单并在模型列表内提供搜索框，并新增工作区权限面板统一查看与切换所有会话的权限预设。浏览器载体下自动隐藏重启与模式切换。",
+  "version": "1.5.0",
+  "description": "DSH 快捷键工具包（Web / Desktop 双载体）：快捷键已并入官方「设置 → 快捷键」界面（可录制 / 可恢复默认 / 与官方命令统一冲突检测），工作区权限面板统一查看与切换所有会话的权限预设；模型选择器搜索框改为可开关的子插件。",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -24,7 +24,10 @@
     "dsh-hotkey-toolkit",
     "hotkey",
     "shortcut",
+    "shortcuts",
+    "keybinding",
     "model-search",
+    "subplugin",
     "permission",
     "plugin"
   ],
@@ -46,6 +49,7 @@
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-shortcuts",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-slots"
@@ -53,7 +57,7 @@
     }
   },
   "scripts": {
-    "test": "node test/model-seat.cjs && node test/smoke.cjs && node test/platform.cjs",
+    "test": "node test/binding-audit.cjs && node test/dictionaries.cjs && node test/model-seat.cjs && node test/seat-toggle.cjs && node test/smoke.cjs && node test/platform.cjs",
     "test:dom": "node test/model-seat-dom.cjs && node test/model-seat-resilience.cjs"
   }
 }
