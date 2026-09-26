@@ -166,6 +166,14 @@ const collect = (node, predicate, found = []) => {
   }
   return found;
 };
+/** Flatten one subtree's text, so rows can be located by their label key. */
+const explain = (node) => {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(explain).join(" ");
+  if (typeof node !== "object") return "";
+  return childList(node).map(explain).join(" ");
+};
 /** Render the settings page and return its tree. */
 const renderSettings = () => {
   if (settingsComponent === null) throw new Error("the hotkey-toolkit settings section was never registered");
@@ -187,11 +195,34 @@ const STORAGE_KEY = "dsh.hotkeyToolkit.v1";
 /** Find the modelSearch checkbox in the rendered settings tree. */
 const modelSearchCheckbox = () => {
   const tree = renderSettings();
-  const inputs = collect(tree, (entry) => entry.type === "input" && entry.props.type === "checkbox");
-  if (inputs.length !== 1) {
-    fail("expected exactly one checkbox (the model-search switch) on the settings page; saw " + inputs.length);
+  /*
+   * The page carries one switch per contributed command PLUS the model-search
+   * sub-plugin switch. Identify the model-search one by its row label rather than
+   * by position, so adding or reordering command switches cannot silently make
+   * this suite toggle the wrong thing.
+   */
+  const rows = collect(tree, (entry) => entry.props?.className === "dshk-row");
+  const row = rows.find((candidate) => explain(candidate).includes("modelSearch"));
+  if (row === undefined) {
+    fail("no settings row labelled 'modelSearch'; saw " + JSON.stringify(rows.map(explain)));
   }
+  const inputs = collect(row, (entry) => entry.type === "input" && entry.props.type === "checkbox");
+  if (inputs.length !== 1) fail("the model-search row does not carry exactly one checkbox; saw " + inputs.length);
   return inputs[0];
+};
+/** Every per-command shortcut switch currently rendered, keyed by its action. */
+const shortcutSwitches = () => {
+  const tree = renderSettings();
+  const out = new Map();
+  for (const action of ["refresh", "restart", "compatibility", "extended", "advanced"]) {
+    const row = collect(tree, (entry) => entry.props?.className === "dshk-row")
+      .find((candidate) => explain(candidate).includes("switch_" + action));
+    if (row === undefined) fail("the settings page has no switch row for '" + action + "'");
+    const input = collect(row, (entry) => entry.type === "input" && entry.props.type === "checkbox")[0];
+    if (input === undefined) fail("the '" + action + "' switch row carries no checkbox");
+    out.set(action, input);
+  }
+  return out;
 };
 
 // 1. Default is ON: the seat is mounted, and the switch reads checked.
@@ -256,7 +287,47 @@ if (/priority:\s*-1/.test(source)) {
   fail("the seat still passes priority: -1; the dynamic facade assigns a lower rank automatically and overwrites it");
 }
 
+// 10. Every contributed command must have its own switch on the settings page,
+//     defaulting to ON, and flipping it must persist per-command (not clobber the
+//     sibling switches or the model-search preference).
+storage.delete(STORAGE_KEY);
+load();
+let switches = shortcutSwitches();
+if (switches.size !== 5) fail("expected 5 per-command switches, saw " + switches.size);
+for (const [action, input] of switches) {
+  if (input.props.checked !== true) fail("the '" + action + "' switch does not default to ON");
+}
+// Turn exactly one off; the others must be untouched.
+switches.get("restart").props.onChange({ target: { checked: false } });
+const persisted = JSON.parse(storage.get(STORAGE_KEY));
+if (persisted.shortcuts.restart !== false) fail("disabling 'restart' did not persist");
+for (const other of ["refresh", "compatibility", "extended", "advanced"]) {
+  if (persisted.shortcuts[other] !== true) {
+    fail("disabling 'restart' also changed '" + other + "' (per-command isolation broken)");
+  }
+}
+if (persisted.modelSearch !== true) fail("disabling a shortcut switch disturbed the model-search preference");
+// And the rendered state must reflect it after a reload.
+load();
+switches = shortcutSwitches();
+if (switches.get("restart").props.checked !== false) fail("the 'restart' switch did not read back as OFF");
+if (switches.get("refresh").props.checked !== true) fail("the 'refresh' switch did not stay ON");
+
+// 11. A payload written before a switch existed must default the missing key to ON,
+//     never to `undefined` (which would read as disabled and silently kill a
+//     shortcut the user never touched).
+storage.set(STORAGE_KEY, JSON.stringify({ shortcuts: { refresh: false } }));
+load();
+switches = shortcutSwitches();
+if (switches.get("refresh").props.checked !== false) fail("a stored explicit OFF was not honoured");
+for (const action of ["restart", "compatibility", "extended", "advanced"]) {
+  if (switches.get(action).props.checked !== true) {
+    fail("the '" + action + "' switch defaulted to OFF when absent from the stored payload");
+  }
+}
+
 console.log(
   "seat-toggle ok: default=on live-off=retired live-on=remounted"
-  + " idempotent=1 stored-off=untouched absent=on legacy=on corrupt=on priority-literal=absent",
+  + " idempotent=1 stored-off=untouched absent=on legacy=on corrupt=on priority-literal=absent"
+  + " command-switches=5 per-command-isolated=1 missing-key-defaults-on=1",
 );

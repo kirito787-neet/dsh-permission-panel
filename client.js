@@ -42,6 +42,18 @@ window.__ModuleLoader__.load({
 			shortcutHint: "刷新界面、重启 DSH 与三个模式切换都已在官方快捷键列表中，可在「设置 → 快捷键」里查看与修改。",
 			shortcutRefreshNote: "「刷新界面」默认不绑定：Ctrl+R 已被官方「刷新页面」占用，请在上方界面自行指定组合键。",
 			openShortcuts: "打开快捷键设置",
+			switchSection: "快捷键开关",
+			switchSectionHint: "逐个启用或停用本插件提供的快捷键。停用后命令仍保留在官方快捷键列表中，键位与冲突检测都不变，只是按下时不执行（也不会拦截该按键）。",
+			switch_refresh: "刷新界面",
+			switch_restart: "重启 DSH",
+			switch_compatibility: "切换到兼容模式",
+			switch_extended: "切换到扩展模式",
+			switch_advanced: "切换到增强模式",
+			switchHint_refresh: "重新加载渲染进程；插件与设置都会重新读取。",
+			switchHint_restart: "重新启动 DSH Desktop 应用。",
+			switchHint_compatibility: "切到兼容模式并重启 DSH Desktop 生效。",
+			switchHint_extended: "切到扩展模式并重启 DSH Desktop 生效。",
+			switchHint_advanced: "切到增强模式并重启 DSH Desktop 生效。",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
 			cmdRefresh: "刷新界面（快捷键工具包）",
 			cmdRestart: "重启 DSH（快捷键工具包）",
@@ -100,6 +112,18 @@ window.__ModuleLoader__.load({
 			shortcutHint: "Refresh, Restart DSH, and the three mode switches are all in the official shortcut list, editable from Settings → Keyboard shortcuts.",
 			shortcutRefreshNote: "\"Refresh interface\" ships unbound: Ctrl+R already belongs to the official \"Refresh page\", so pick a combination for it in that dialog.",
 			openShortcuts: "Open keyboard shortcuts",
+			switchSection: "Shortcut switches",
+			switchSectionHint: "Enable or disable each shortcut this plugin contributes. A disabled command stays in the official shortcut list with its keys and conflict checks intact — it simply does not run when pressed (and does not swallow the key).",
+			switch_refresh: "Refresh interface",
+			switch_restart: "Restart DSH",
+			switch_compatibility: "Switch to Compatibility mode",
+			switch_extended: "Switch to Extended mode",
+			switch_advanced: "Switch to Advanced mode",
+			switchHint_refresh: "Reloads the renderer; plugins and settings are read again.",
+			switchHint_restart: "Relaunches the DSH Desktop application.",
+			switchHint_compatibility: "Switches to Compatibility mode and restarts DSH Desktop to apply it.",
+			switchHint_extended: "Switches to Extended mode and restarts DSH Desktop to apply it.",
+			switchHint_advanced: "Switches to Advanced mode and restarts DSH Desktop to apply it.",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
 			cmdRefresh: "Refresh interface (Hotkey Toolkit)",
 			cmdRestart: "Restart DSH (Hotkey Toolkit)",
@@ -271,7 +295,7 @@ window.__ModuleLoader__.load({
 		const MODE_IDS = ["compatibility", "extended", "advanced"];
 
 		/**
-		 * Shipped defaults for the preferences this plugin still owns itself.
+		 * Shipped defaults for the preferences this plugin owns itself.
 		 *
 		 * Keyboard bindings are deliberately ABSENT. They belong to the official
 		 * shortcut service now (`ctx.shortcuts.register`), which persists them in
@@ -281,26 +305,66 @@ window.__ModuleLoader__.load({
 		 * sync with the official one — two recorders, two stores, two answers to
 		 * "what is Ctrl+R bound to".
 		 *
-		 * `modelSearch` is the model-selector sub-plugin switch: ON, this plugin
-		 * shadows the official `conversation.input.model` seat with its searchable
-		 * menu; OFF, the seat is retired and the official two-level menu returns.
+		 * What this DOES own:
+		 *  - `modelSearch`: the model-selector sub-plugin switch. ON, this plugin
+		 *    shadows the official `conversation.input.model` seat with its searchable
+		 *    menu; OFF, the seat is retired and the official two-level menu returns.
+		 *  - `shortcuts`: one arm/disarm switch PER command this plugin contributes.
+		 *    These are gates on the action, not on the binding: the command stays
+		 *    registered, keeps its keys, and keeps its row in the official dialog —
+		 *    its `resolve` simply refuses while disarmed. That is what makes the
+		 *    switch reversible without churning the shortcut registry (every
+		 *    register/unregister invalidates open edit drafts and briefly disables
+		 *    editing) and without ever losing a recorded combination.
 		 */
 		const DEFAULT_CONFIG = {
 			modelSearch: true,
+			shortcuts: {
+				refresh: true,
+				restart: true,
+				compatibility: true,
+				extended: true,
+				advanced: true,
+			},
 		};
+
+		/** Every per-command switch this plugin exposes, in display order. */
+		const SHORTCUT_SWITCHES = ["refresh", "restart", "compatibility", "extended", "advanced"];
 
 		/**
 		 * Merge a stored payload over the defaults.
 		 *
-		 * Tolerant of the pre-1.5 payload (which carried `enabled`, `refresh`,
-		 * `restart`, and `modes`): those fields are simply ignored now, so an
-		 * existing profile upgrades without losing its model-search choice.
+		 * Tolerant by design, for two separate reasons:
+		 *  - the pre-1.5 payload carried `enabled`, `refresh`, `restart`, and `modes`;
+		 *    those fields are simply ignored now, so an existing profile upgrades
+		 *    without losing its model-search choice;
+		 *  - `shortcuts` is merged key-by-key, so a payload written before a new
+		 *    switch existed still gets the shipped default for the missing keys
+		 *    rather than inheriting `undefined` (which would read as "off").
 		 */
 		function normalizeConfig(raw) {
-			const next = { modelSearch: DEFAULT_CONFIG.modelSearch };
+			const next = { modelSearch: DEFAULT_CONFIG.modelSearch, shortcuts: { ...DEFAULT_CONFIG.shortcuts } };
 			if (raw === null || typeof raw !== "object") return next;
 			if (typeof raw.modelSearch === "boolean") next.modelSearch = raw.modelSearch;
+			if (raw.shortcuts !== null && typeof raw.shortcuts === "object") {
+				for (const key of SHORTCUT_SWITCHES) {
+					if (typeof raw.shortcuts[key] === "boolean") next.shortcuts[key] = raw.shortcuts[key];
+				}
+			}
 			return next;
+		}
+
+		/**
+		 * Whether one contributed command is currently armed.
+		 *
+		 * Absent or non-boolean reads as ENABLED: a missing key must never silently
+		 * disable a shortcut the user never touched.
+		 * @param action - switch key (`refresh`, `restart`, or a mode id).
+		 * @returns whether the command may run.
+		 */
+		function shortcutEnabled(action) {
+			const value = configStore.getSnapshot().shortcuts[action];
+			return value !== false;
 		}
 
 		/**
@@ -509,6 +573,26 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * Record a failure from a panel-side capability probe.
+		 *
+		 * Kept separate from the seat diagnostics because these are not seat faults:
+		 * they mean a service this plugin depends on was missing or threw, which is
+		 * exactly the class of failure that used to be silent (a nested `ctx.inject`
+		 * whose service does not exist never calls back and never reports anything).
+		 * Surfacing it on the console and in the shared diagnostic slot is what turns
+		 * "the panel is mysteriously empty" into a one-line answer.
+		 * @param where - the probe that failed.
+		 * @param cause - the thrown value.
+		 */
+		function reportPanelFailure(where, cause) {
+			const message = describe(cause);
+			console.error("hotkey-toolkit: " + where + " failed:", cause);
+			if (typeof window !== "undefined") {
+				window.__dshHotkeyPanel = { where, message, at: Date.now() };
+			}
+		}
+
+		/**
 		 * Refresh the interface.
 		 *
 		 * Under the Desktop shell this is the Desktop-owned reload action, which
@@ -549,17 +633,21 @@ window.__ModuleLoader__.load({
 		 * marker-free carrier cannot render. The Desktop Host watches this namespace
 		 * and relaunches itself when mode/port/material move, so no explicit restart
 		 * call is needed here: writing the mode IS the restart trigger.
-		 * @param scope - bound dsh-desktop settings scope, or undefined when absent.
+		 *
+		 * `ConfigForm.set` resolves `true` only on Host acceptance; a refusal is not a
+		 * throw, so the result is checked rather than assumed. A silently-refused
+		 * write would otherwise report "mode saved" while nothing changed.
+		 * @param form - the `dsh-desktop` config form, or null when unavailable.
 		 * @param mode - target mode.
 		 */
-		async function switchMode(scope, mode) {
+		async function switchMode(form, mode) {
 			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
-			if (scope === void 0 || scope === null) throw new Error(text("scopeUnavailable"));
+			if (form === null || form === void 0) throw new Error(text("scopeUnavailable"));
 			if (mode !== "compatibility") {
-				await scope.set("networkExposure", "loopback");
-				await scope.set("openBrowser", false);
+				if (!await form.set("networkExposure", "loopback")) throw new Error(text("scopeUnavailable"));
+				if (!await form.set("openBrowser", false)) throw new Error(text("scopeUnavailable"));
 			}
-			await scope.set("mode", mode);
+			if (!await form.set("mode", mode)) throw new Error(text("scopeUnavailable"));
 			notify(text("savedRestarting"));
 		}
 
@@ -609,6 +697,30 @@ window.__ModuleLoader__.load({
 			const { t } = props;
 			const config = useConfig();
 			const desktop = hasDesktopHost();
+			/*
+			 * Per-command switches. Desktop-only commands are listed on every carrier
+			 * anyway: the switch is a property of the COMMAND, not of the current page,
+			 * and hiding it here would make the stored preference invisible (and
+			 * therefore unchangeable) on a browser carrier. The row notes the carrier
+			 * restriction instead.
+			 */
+			const switchRows = SHORTCUT_SWITCHES.map((action) => {
+				const desktopOnly = action !== "refresh";
+				return React.createElement("div", { className: "dshk-row", key: action }, [
+					React.createElement("div", { className: "dshk-rowCopy", key: "c" }, [
+						React.createElement("div", { className: "dshk-rowLabel", key: "l" }, t("switch_" + action)),
+						React.createElement("div", { className: "dshk-rowHint", key: "h" },
+							desktopOnly && !desktop ? t("desktopOnly") : t("switchHint_" + action)),
+					]),
+					React.createElement("label", { className: "dshk-switch", key: "s" }, React.createElement("input", {
+						type: "checkbox",
+						checked: config.shortcuts[action] !== false,
+						onChange: (event) => configStore.update({
+							shortcuts: { ...config.shortcuts, [action]: event.target.checked },
+						}),
+					})),
+				]);
+			});
 			return React.createElement("div", { className: "dshk-page" }, [
 				React.createElement("p", { className: "dshk-intro", key: "intro" }, desktop ? t("intro") : t("introWeb")),
 				/*
@@ -622,6 +734,11 @@ window.__ModuleLoader__.load({
 					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("shortcutHint")),
 					React.createElement("div", { className: "dshk-hint", key: "rn" }, t("shortcutRefreshNote")),
 					desktop ? null : React.createElement("div", { className: "dshk-hint dshk-platformNote", key: "pn" }, t("webCarrierNote")),
+				]),
+				React.createElement("div", { className: "dshk-card", key: "switches" }, [
+					React.createElement("h4", { key: "h" }, t("switchSection")),
+					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("switchSectionHint")),
+					...switchRows,
 				]),
 				React.createElement("div", { className: "dshk-card", key: "subplugins" }, [
 					React.createElement("h4", { key: "h" }, t("subpluginSection")),
@@ -1448,18 +1565,30 @@ window.__ModuleLoader__.load({
 			translate = ctx.locale.bind(NS);
 
 			/*
-			 * The Desktop settings scope is bound ONCE here so its disposer belongs to this
-			 * plugin's fiber; binding per keystroke would leak a scope on every shortcut.
+			 * The Desktop settings form is resolved ONCE here so its disposer belongs to
+			 * this plugin's fiber; resolving per keystroke would leak a form on every
+			 * shortcut.
 			 *
-			 * Bound only when the Desktop shell is carrying this page: `dsh-desktop` is a
-			 * Desktop-owned namespace, and a browser carrier serves no settings row for it.
-			 * `switchMode` refuses without a scope, so the failure stays local to the
-			 * Desktop-only action instead of breaking activation.
+			 * Resolved only when the Desktop shell is carrying this page: `dsh-desktop`
+			 * is a Desktop-owned namespace, and a browser carrier serves no settings row
+			 * for it. `switchMode` refuses without a form, so the failure stays local to
+			 * the Desktop-only action instead of breaking activation.
+			 *
+			 * NOTE ON THE API. DSH 0.1.7 removed `ctx.settingsScope` outright — there is
+			 * no compatibility shim, and a nested `ctx.inject(['settingsScope'], …)`
+			 * does not fail activation, it simply NEVER FIRES. That is a silent
+			 * failure: the panel renders, every callback is wired to `null`, and the
+			 * feature looks broken rather than absent. The supported surface is
+			 * `ctx.configForms.get(entryId)`, so that is what is used here.
 			 */
-			let modeScope;
+			let modeForm = null;
 			if (hasDesktopHost()) {
-				ctx.inject(["settingsScope"], (scope) => {
-					modeScope = scope.settingsScope.bind({ namespace: DESKTOP_NS });
+				ctx.inject(["configForms"], (scope) => {
+					try {
+						modeForm = scope.configForms.get(DESKTOP_NS);
+					} catch (cause) {
+						reportPanelFailure("configForms.get(" + DESKTOP_NS + ")", cause);
+					}
 				});
 			}
 
@@ -1510,11 +1639,24 @@ window.__ModuleLoader__.load({
 				const label = (key) => () => translate(key);
 				/**
 				 * Register one command, refusing to let a validation failure propagate.
+				 *
+				 * The per-command switch is enforced HERE, in a wrapper around the owner's
+				 * `resolve`, rather than by registering and unregistering the command. That
+				 * choice matters: every register/unregister round invalidates open edit
+				 * drafts in the official dialog and briefly disables editing, and a
+				 * user-recorded combination would be dropped from the running catalog while
+				 * disarmed. Gating the action keeps the row, its keys, and its conflicts
+				 * intact — the command simply declines to run.
+				 *
+				 * A disarmed command returns `pass`, not `blocked`. `blocked` CONSUMES the
+				 * keystroke, which would let a disabled plugin shortcut shadow whatever the
+				 * user actually meant to press; `pass` leaves the key to everyone else.
 				 * @param id - command id, already checked against the official grammar.
+				 * @param action - switch key in `config.shortcuts`.
 				 * @param spec - label key, aliases, defaults, and the action.
 				 * @returns nothing; failures are reported once and dropped.
 				 */
-				const contribute = (id, spec) => {
+				const contribute = (id, action, spec) => {
 					scope.effect(() => {
 						try {
 							return shortcuts.register({
@@ -1524,7 +1666,10 @@ window.__ModuleLoader__.load({
 								defaults: spec.defaults,
 								regions: spec.regions,
 								modals: spec.modals,
-								resolve: spec.resolve,
+								resolve: (context) => {
+									if (!shortcutEnabled(action)) return { status: "pass" };
+									return spec.resolve(context);
+								},
 							});
 						} catch (cause) {
 							/*
@@ -1548,7 +1693,7 @@ window.__ModuleLoader__.load({
 				 * fighting over one key. The row still appears in the official dialog and
 				 * the user binds it there; `test/binding-audit.cjs` pins this decision.
 				 */
-				contribute(COMMAND_REFRESH, {
+				contribute(COMMAND_REFRESH, "refresh", {
 					labelKey: "cmdRefresh",
 					aliases: [translate("cmdAliasRefresh"), "refresh", "reload"],
 					defaults: {},
@@ -1574,7 +1719,7 @@ window.__ModuleLoader__.load({
 				 * request at an endpoint this carrier does not serve is worse than
 				 * doing nothing.
 				 */
-				contribute(COMMAND_RESTART, {
+				contribute(COMMAND_RESTART, "restart", {
 					labelKey: "cmdRestart",
 					aliases: [translate("cmdAliasRestart"), "restart", "relaunch"],
 					defaults: desktopBindingsFor("restart"),
@@ -1590,7 +1735,7 @@ window.__ModuleLoader__.load({
 
 				/* The three window-mode switches, Desktop-only for the same reasons. */
 				for (const mode of MODE_IDS) {
-					contribute(COMMAND_MODE[mode], {
+					contribute(COMMAND_MODE[mode], mode, {
 						labelKey: "cmdMode" + mode.charAt(0).toUpperCase() + mode.slice(1),
 						aliases: [translate("cmdAliasMode"), mode],
 						defaults: desktopBindingsFor(mode),
@@ -1600,11 +1745,14 @@ window.__ModuleLoader__.load({
 							if (!hasDesktopHost()) return { status: "blocked", reason: text("desktopOnly") };
 							/* Already in this mode: nothing to do, but do not consume the key. */
 							if (currentMode() === mode) return { status: "pass" };
-							/* The scope is bound lazily; report rather than throw if absent. */
-							if (modeScope === void 0 || modeScope === null) return { status: "blocked", reason: text("scopeUnavailable") };
-							const bound = modeScope;
+							/*
+							 * The form is resolved lazily and may be absent when the Desktop
+							 * settings surface is unavailable; report rather than throw.
+							 */
+							if (modeForm === null || modeForm === void 0) return { status: "blocked", reason: text("scopeUnavailable") };
+							const form = modeForm;
 							return { status: "handled", run: () => {
-								switchMode(bound, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
+								switchMode(form, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
 							} };
 						},
 					});
@@ -1612,69 +1760,127 @@ window.__ModuleLoader__.load({
 			});
 
 			/*
-		 * Permissions panel state: the default-preset cell (settings mirror read +
-		 * remote.settings.mutate write, mirroring the official permission row) and the
-		 * confirmation gate standing between Full access and one click.
+		 * Permissions panel state.
+		 *
+		 * Two things were wrong here, and both were silent.
+		 *
+		 * 1. It read the settings surface through `ctx.settingsScope`, which DSH 0.1.7
+		 *    REMOVED (replaced by `configForms`). A nested `ctx.inject(['settingsScope'],
+		 *    …)` does not throw and does not fail activation — the callback simply never
+		 *    runs, so `describeFace` stayed null and the default-preset cell rendered as
+		 *    permanently "loading" with no way to write. The panel now resolves the
+		 *    `permission` namespace through the supported `remote.settings` transport.
+		 * 2. It derived each row's preset OPTIONS from the session projection, but the
+		 *    `permissions` projection is `{ currentValue }` only — there is no `options`
+		 *    field. `capable` was therefore always false and EVERY session row rendered
+		 *    disabled. The options come from the process-level catalog Remote
+		 *    (`remote.permissionPresets.catalog()`), which is what the official picker
+		 *    uses too.
+		 *
+		 * Both bugs shared a shape: the code trusted a field or a service that does not
+		 * exist, and nothing failed loudly. The suite's stubs were richer than the real
+		 * host, which is why they passed.
 		 */
 		const permissionPanel = {
-			describeFace: null,
+			/** Settings transport context (`remote`), or null until injected. */
 			settingsCtx: null,
-			unfollow: null,
+			/** Latest known `permission` namespace revision, fencing writes. */
+			revision: void 0,
 			current: null,
 			options: [],
-			revision: 0,
 			writable: false,
 			saving: false,
 			status: "idle",
 			error: null,
+			/** Process-level preset catalog from the Host (shared by every session). */
+			catalog: [],
+			catalogStatus: "idle",
+			catalogError: null,
 			version: 0,
 			notify() {
 				this.version += 1;
 				for (const listener of permissionPanelListeners) listener();
 			},
-			async load() {
-				const face = this.describeFace;
-				if (face === null) return;
-				if (this.unfollow === null) {
-					this.unfollow = face.subscribe(() => this.derive());
+			/**
+			 * Read the process-level permission catalog.
+			 *
+			 * This is the ONLY source of selectable presets; the per-session
+			 * projection carries just the current value. It is read once per panel load
+			 * and reused for every row.
+			 */
+			async loadCatalog() {
+				const panelCtx = this.settingsCtx;
+				if (panelCtx === null) return;
+				this.catalogStatus = "loading";
+				this.catalogError = null;
+				this.notify();
+				try {
+					const response = await panelCtx.remote.permissionPresets.catalog();
+					if (!response.ok) {
+						throw new Error(response.error && response.error.message ? response.error.message : String(response.error));
+					}
+					const options = response.value !== null && typeof response.value === "object" && Array.isArray(response.value.options)
+						? response.value.options
+						: [];
+					this.catalog = options
+						.filter((option) => option !== null && typeof option === "object" && typeof option.value === "string")
+						.map((option) => ({ value: option.value, name: typeof option.name === "string" ? option.name : option.value }));
+					this.catalogStatus = "ready";
+				} catch (cause) {
+					this.catalogStatus = "error";
+					this.catalogError = describe(cause);
 				}
+				this.notify();
+			},
+			/** Read the `permission` namespace's current `defaultPreset` and writability. */
+			async load() {
+				const panelCtx = this.settingsCtx;
+				if (panelCtx === null) return;
 				this.status = "loading";
 				this.error = null;
 				this.notify();
 				try {
-					await face.ensure();
+					const response = await panelCtx.remote.settings.describe();
+					if (!response.ok) {
+						throw new Error(response.error && response.error.message ? response.error.message : String(response.error));
+					}
+					this.adopt(response.value);
 				} catch (cause) {
 					this.fail(cause);
 					return;
 				}
-				this.derive();
+				/* The catalog is independent of the settings read; a failure here is
+				 * reported on its own so one bad transport does not mask the other. */
+				await this.loadCatalog();
 			},
-			derive() {
-				const face = this.describeFace;
-				if (face === null) return;
-				const mirrored = face.getSnapshot();
-				const view = mirrored.view === void 0 ? null : mirrored.view.namespaces.find((entry) => entry.ns === PERMISSION_SETTINGS_NS) ?? null;
-				if (view === null) {
+			/** Fold one `settings.describe` answer into the panel snapshot. */
+			adopt(view) {
+				const namespaces = view !== null && typeof view === "object" && Array.isArray(view.namespaces) ? view.namespaces : [];
+				const namespace = namespaces.find((entry) => entry !== null && typeof entry === "object" && entry.ns === PERMISSION_SETTINGS_NS) ?? null;
+				if (namespace === null) {
 					this.current = null;
 					this.options = [];
 					this.writable = false;
-					this.status = mirrored.status === "unavailable" ? "unavailable" : "loading";
+					this.revision = void 0;
+					this.status = "unavailable";
 					this.notify();
 					return;
 				}
-				const value = view.value !== null && typeof view.value === "object" ? view.value.defaultPreset : void 0;
+				const raw = namespace.value;
+				const value = raw !== null && typeof raw === "object" ? raw.defaultPreset : void 0;
 				if (typeof value !== "string") {
 					this.fail(new Error("permission settings has no defaultPreset value"));
 					return;
 				}
 				this.current = value;
 				this.options = defaultPresetOptions(value);
-				this.writable = mirrored.view.writable === true;
-				this.revision = view.revision;
+				this.writable = view.writable === true;
+				this.revision = namespace.revision;
 				this.status = "ready";
 				this.error = null;
 				this.notify();
 			},
+			/** Write one new-session default preset through the settings transport. */
 			async select(preset) {
 				const panelCtx = this.settingsCtx;
 				if (panelCtx === null || this.saving) return;
@@ -1689,24 +1895,34 @@ window.__ModuleLoader__.load({
 						value: preset,
 					}], this.revision);
 					if (!response.ok) throw new Error(response.error && response.error.message ? response.error.message : String(response.error));
-					this.describeFace.acceptView(response.value);
+					/*
+					 * Fold the answer back rather than assuming success: the Host may have
+					 * clamped or rewritten the value, and the accepted revision is what the
+					 * next write must be fenced against.
+					 */
+					const accepted = response.value;
+					if (accepted !== null && typeof accepted === "object" && accepted.ns === PERMISSION_SETTINGS_NS) {
+						this.current = typeof accepted.value === "object" && accepted.value !== null && typeof accepted.value.defaultPreset === "string"
+							? accepted.value.defaultPreset
+							: preset;
+						this.revision = accepted.revision;
+						this.options = defaultPresetOptions(this.current);
+					} else {
+						this.current = preset;
+					}
+					this.status = "ready";
 					notify(text("wpDefaultSaved"));
 				} catch (cause) {
 					this.fail(cause);
 				} finally {
 					this.saving = false;
+					this.notify();
 				}
 			},
 			fail(cause) {
 				this.status = "error";
 				this.error = describe(cause);
 				this.notify();
-			},
-			dispose() {
-				if (this.unfollow !== null) {
-					this.unfollow();
-					this.unfollow = null;
-				}
 			},
 		};
 		const permissionPanelListeners = new Set();
@@ -1719,11 +1935,13 @@ window.__ModuleLoader__.load({
 			},
 			() => permissionPanel.version,
 		);
-		ctx.effect(() => () => {
-			permissionPanel.dispose();
-		}, "hotkey-toolkit: permissions panel mirror dispose");
-		ctx.inject(["settingsScope", "remote", "settingsSchema"], (scope) => {
-			permissionPanel.describeFace = scope.settingsScope.describe();
+		/*
+		 * Bind the settings transport and the schema. `remote.settings` is the
+		 * supported 0.1.7 surface for both reading the document and writing it;
+		 * `settingsSchema` supplies the selectable const values when the catalog
+		 * does not.
+		 */
+		ctx.inject(["remote", "settingsSchema"], (scope) => {
 			permissionPanel.settingsCtx = scope;
 			const schema = scope.settingsSchema;
 			defaultPresetOptions = (current) => {
@@ -1909,14 +2127,21 @@ window.__ModuleLoader__.load({
 
 			const rows = React.useMemo(() => {
 				const out = [];
+				/*
+				 * Preset OPTIONS come from the process-level catalog, not from the session
+				 * projection. The `permissions` projection is `{ currentValue }` alone —
+				 * reading `permission.options` here (as this used to) yields undefined for
+				 * every session, so `capable` was always false and every row rendered
+				 * disabled. That was the second half of "permission management does not
+				 * work": the rows existed but could never be clicked.
+				 */
+				const catalog = panel.catalog;
+				const options = catalog.map((option) => ({ value: option.value, label: presetLabel(option.value, t) }));
 				for (const id of sessions.ids) {
 					const summary = sessions.byId[id];
 					if (summary === void 0 || summary.parentId !== void 0) continue;
 					const values = summary.projectionValues;
 					const permission = values !== void 0 ? values.permissions : void 0;
-					const options = permission !== void 0 && permission !== null && Array.isArray(permission.options)
-						? permission.options.filter((option) => option && option.value !== "custom").map((option) => ({ value: option.value, label: presetLabel(option.value, t) }))
-						: [];
 					const current = permission !== void 0 && permission !== null && typeof permission.currentValue === "string" ? permission.currentValue : null;
 					const tags = [];
 					if (summary.id === sessions.current) tags.push(t("wpCurrent"));
@@ -1928,12 +2153,18 @@ window.__ModuleLoader__.load({
 						tags,
 						current,
 						options,
-						capable: options.length > 0,
+						/*
+						 * A row is actionable when the Host advertises a catalog AND the
+						 * session actually carries a permission projection. The projection's
+						 * presence is the real capability signal: it is absent when no
+						 * permission service is composed.
+						 */
+						capable: options.length > 0 && current !== null,
 					});
 				}
 				out.sort((a, b) => a.title.localeCompare(b.title));
 				return out;
-			}, [sessions, t]);
+			}, [sessions, t, panel.catalog, panel.version]);
 
 			/*
 			 * Apply a preset to one session: the part that actually talks to the Host.

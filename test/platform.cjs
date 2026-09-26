@@ -83,7 +83,7 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
 function loadPlugin({ bridge, search }) {
   const reloads = [];
   const fetches = [];
-  const bindCalls = [];
+  const formReads = [];
   const commands = new Map();
   const registrations = new Map();
   // The plugin must NOT install a global keydown listener any more; capturing
@@ -113,10 +113,18 @@ function loadPlugin({ bridge, search }) {
   new Function("require", "window", "document", source)(requireStub, fakeWindow, global.document);
   if (captured === null) throw new Error("client.js never called __ModuleLoader__.load");
 
-  const settingsScope = {
-    settingsScope: {
-      bind: (spec) => { bindCalls.push(spec); return { set: async () => {} }; },
-      describe: () => ({ subscribe: () => () => {}, ensure: async () => {}, getSnapshot: () => ({ status: "ready", error: null, view: { writable: true, namespaces: [] } }), acceptView: () => {} }),
+  /*
+   * `configForms` is the DSH 0.1.7 settings surface. `settingsScope` is NOT
+   * provided here on purpose: it was removed in 0.1.7, and a stub that still
+   * offers it would let the plugin keep depending on a service the real Host does
+   * not serve — which is exactly how the permission panel shipped broken.
+   */
+  const configForms = {
+    configForms: {
+      get: (entryId) => {
+        formReads.push(entryId);
+        return { set: async () => true, getSnapshot: () => ({ status: "ready", value: {}, writable: true, revision: 1 }) };
+      },
     },
   };
   const sessionsService = {
@@ -134,7 +142,7 @@ function loadPlugin({ bridge, search }) {
   };
   const scopeFor = (names) => {
     const scope = { effect: runEffect };
-    if (names.includes("settingsScope")) Object.assign(scope, settingsScope);
+    if (names.includes("configForms")) Object.assign(scope, configForms);
     if (names.includes("modelDirectories")) {
       Object.assign(scope, {
         // Must never be called during activation; the seat resolves it lazily.
@@ -144,6 +152,18 @@ function loadPlugin({ bridge, search }) {
     } else if (names.includes("sessions")) Object.assign(scope, { sessions: sessionsService });
     if (names.includes("shortcuts")) Object.assign(scope, { shortcuts: shortcutsService });
     if (names.includes("slots")) Object.assign(scope, { slots: slotsService });
+    if (names.includes("remote") || names.includes("settingsSchema")) {
+      Object.assign(scope, {
+        remote: {
+          settings: {
+            describe: async () => ({ ok: true, value: { writable: true, namespaces: [] } }),
+            mutate: async () => ({ ok: true, value: { ns: "permission", revision: 1, value: {} } }),
+          },
+          permissionPresets: { catalog: async () => ({ ok: true, value: { options: [], defaultOptions: [], defaultPreset: "" } }) },
+        },
+        settingsSchema: { describe: () => ({ namespaces: [] }), rehydrate: (value) => value, nodeAtPath: () => undefined },
+      });
+    }
     return scope;
   };
   const ctx = {
@@ -160,7 +180,7 @@ function loadPlugin({ bridge, search }) {
   plugin.apply(ctx);
 
   global.window = previousWindow;
-  const carrier = { bridge, search, windowKeydown, reloads, fetches, bindCalls, registrations, commands };
+  const carrier = { bridge, search, windowKeydown, reloads, fetches, formReads, registrations, commands };
   loaded.push(carrier);
   return carrier;
 }
@@ -272,9 +292,9 @@ const EXPECTED_COMMANDS = [
     }
   }
 
-  // The `dsh-desktop` namespace is Desktop-owned; binding it on a browser
-  // carrier would subscribe to a namespace that has no settings row.
-  if (web.bindCalls.length !== 0) throw new Error("web: bound the dsh-desktop settings scope without the Desktop shell");
+  // The `dsh-desktop` namespace is Desktop-owned; resolving its form on a browser
+  // carrier would target a namespace that has no settings row.
+  if (web.formReads.length !== 0) throw new Error("web: resolved the dsh-desktop settings form without the Desktop shell");
 
   // Refresh still works on the web carrier, via a page reload rather than a
   // Desktop endpoint. The command is unbound by default, so it is invoked the way
@@ -311,8 +331,8 @@ const EXPECTED_COMMANDS = [
   for (const profile of ["desktop:macos", "desktop:windows", "desktop:linux"]) {
     if (restartDefaults[profile] === undefined) throw new Error("desktop: Restart has no default for " + profile);
   }
-  if (desktop.bindCalls.length !== 1 || desktop.bindCalls[0].namespace !== "dsh-desktop") {
-    throw new Error("desktop: the dsh-desktop settings scope was not bound exactly once; saw " + JSON.stringify(desktop.bindCalls));
+  if (desktop.formReads.length !== 1 || desktop.formReads[0] !== "dsh-desktop") {
+    throw new Error("desktop: the dsh-desktop settings form was not resolved exactly once; saw " + JSON.stringify(desktop.formReads));
   }
   // Under the shell, Refresh rides the Desktop action rather than a page reload.
   const desktopRefresh = desktop.commands.get("hotkeyToolkit.refresh").resolve({ region: "page", modal: null, target: null });
@@ -329,7 +349,7 @@ const EXPECTED_COMMANDS = [
   // The bridge and the marker are independent signals; a generation that ships
   // only one of them must still be recognised as the shell.
   const marker = loadPlugin({ bridge: false, search: "?dsh-desktop-mode=extended" });
-  if (marker.bindCalls.length !== 1) throw new Error("marker: the dsh-desktop settings scope was not bound");
+  if (marker.formReads.length !== 1) throw new Error("marker: the dsh-desktop settings form was not resolved");
   const markerRestart = marker.commands.get("hotkeyToolkit.restart").resolve({ region: "page", modal: null, target: null });
   if (markerRestart.status !== "handled") {
     throw new Error("marker: Restart refused on a shell detected from the URL marker alone");

@@ -94,14 +94,12 @@ new Function("require", "window", "document", source)(requireStub, global.window
 if (captured === null) throw new Error("client.js never called __ModuleLoader__.load");
 
 // ---- fake host services ----
-const permissionsOf = (currentValue) => ({
-  currentValue,
-  options: [
-    { value: "read-only", name: "read-only" },
-    { value: "workspace-write", name: "workspace-write" },
-    { value: "danger-full-access", name: "danger-full-access" },
-  ],
-});
+// The session projection is `{ currentValue }` ONLY. It has no `options` field —
+// the real `PermissionSelection` type is exactly that, and the selectable presets
+// come from the process-level catalog Remote instead. This stub used to invent an
+// `options` array here, which is why the suite passed while the shipped panel
+// disabled every row: the fake host was richer than the real one.
+const permissionsOf = (currentValue) => ({ currentValue });
 const listSnapshot = {
   ids: ["s1", "s2"],
   byId: {
@@ -126,16 +124,30 @@ const registrations = new Map();
 const runEffect = (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; };
 const fakeScope = {
   effect: runEffect,
-  settingsScope: {
-    bind: () => ({ set: async () => {} }),
-    describe: () => ({
-      subscribe: () => () => {},
-      ensure: async () => {},
-      getSnapshot: () => ({ status: "ready", error: null, view: settingsView }),
-      acceptView: () => {},
-    }),
+  remote: {
+    // `remote.settings.describe` is how the panel reads the permission namespace;
+    // `ctx.settingsScope` does not exist in DSH 0.1.7 and must not be provided
+    // here, or the suite would again be testing an API the Host does not serve.
+    settings: {
+      describe: async () => ({ ok: true, value: settingsView }),
+      mutate: async (...args) => { mutateCalls.push(args); return { ok: true, value: settingsView.namespaces[0] }; },
+    },
+    // The process-level preset catalog: the ONLY source of selectable presets.
+    permissionPresets: {
+      catalog: async () => ({
+        ok: true,
+        value: {
+          options: [
+            { value: "read-only", name: "read-only" },
+            { value: "workspace-write", name: "workspace-write" },
+            { value: "danger-full-access", name: "danger-full-access" },
+          ],
+          defaultOptions: [{ value: "read-only", name: "read-only" }],
+          defaultPreset: "read-only",
+        },
+      }),
+    },
   },
-  remote: { settings: { mutate: async (...args) => { mutateCalls.push(args); return { ok: true, value: settingsView }; } } },
   settingsSchema: {
     describe: () => ({ namespaces: [{ ns: "permission", schema: {} }] }),
     rehydrate: (value) => value,
@@ -298,6 +310,20 @@ const openDropdown = (index) => {
   if (rows.length !== 2) throw new Error("case 3: expected 2 session rows, saw " + rows.length);
   const rowA = rows.find((row) => explain(row).includes("Session A"));
   if (rowA === undefined) throw new Error("case 3: Session A row not found");
+
+  // ---- case 3a: session rows must be ACTIONABLE ----
+  // This is the regression guard for the shipped bug where every row rendered
+  // disabled. The panel derived each row's presets from
+  // `projectionValues.permissions.options`, a field that does not exist on the
+  // real `PermissionSelection` (it is `{ currentValue }`), so `capable` was
+  // always false. Options now come from the process-level catalog Remote, and
+  // this assertion fails loudly if that ever regresses.
+  const rowATrigger = collect(rowA, (entry) => entry.props?.className === "dshk-wpSelect")[0];
+  if (rowATrigger === undefined) throw new Error("case 3a: Session A has no preset selector");
+  if (rowATrigger.props.disabled === true) {
+    throw new Error("case 3a: the Session A preset selector is DISABLED - permission management is unavailable to the user");
+  }
+
   const readOnly = optionNamed(rowA, "read-only");
   if (readOnly === undefined) throw new Error("case 3: no read-only option rendered on the Session A row");
   readOnly.props.onClick();

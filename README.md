@@ -29,6 +29,28 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
   因此这些动作在 Web 下**不绑定**，而不是绑到一个无效组合上。
 - 在浏览器载体下按到「重启 / 模式切换」会被**拒绝**（`blocked`），不会向不存在的端点发请求。
 
+### 快捷键开关（逐个启用 / 停用）
+
+`设置 → 插件 → 快捷键工具包 → 快捷键开关`，**每个快捷键各有一个开关**，默认全部开启：
+
+| 开关 | 对应命令 |
+| --- | --- |
+| 刷新界面 | `hotkeyToolkit.refresh` |
+| 重启 DSH | `hotkeyToolkit.restart` |
+| 切换到兼容模式 | `hotkeyToolkit.modeCompatibility` |
+| 切换到扩展模式 | `hotkeyToolkit.modeExtended` |
+| 切换到增强模式 | `hotkeyToolkit.modeAdvanced` |
+
+- 开关控制的是**动作**，不是绑定：停用后命令仍留在官方快捷键列表中，
+  键位、冲突检测、录制结果都不受影响，只是按下时**不执行**；
+- 停用返回的是 `pass` 而**不是** `blocked`：`blocked` 会**吞掉**按键，
+  那样一个被停用的插件快捷键会挡住用户真正想按的组合；`pass` 把按键留给其它处理者；
+- 之所以不做「注销命令」，是因为每次注册/注销都会让官方界面里**正在编辑的草稿失效**，
+  并让该命令短暂无法编辑；而用户录制的组合键也会在停用期间从运行目录里消失。
+  只拦动作可以保住行、键位与冲突关系。
+- 存储为**逐键合并**：某个开关在旧载荷里不存在时取默认值（开），
+  不会因为 `undefined` 而被当成关闭。
+
 ### 模型搜索（可开关的子插件）
 
 `设置 → 插件 → 快捷键工具包 → 子插件 → 模型搜索`，默认**开启**：
@@ -53,9 +75,24 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
 - 下拉为 Portal 渲染、视口内自动翻转避让，支持点击外部 / Esc 关闭；
 - 会话列表支持手动刷新，子会话不出现在列表中。
 
+**1.6.0 修复**：此前本面板**完全不可用**，原因有两个，且都是静默失败：
+
+1. 它通过 `ctx.settingsScope` 读取设置面，而该服务在 **DSH 0.1.7 已被移除**
+   （改用 `configForms`）。嵌套的 `ctx.inject(['settingsScope'], …)` **既不报错也不会让插件激活失败**——
+   回调永远不会执行，于是默认权限单元格一直停在「加载中」，无法写入。
+   现已改用受支持的 `remote.settings.describe()` / `mutate()`。
+2. 它从会话投影里读取预设**选项**（`projectionValues.permissions.options`），
+   但真实的 `PermissionSelection` 只有 `{ currentValue }`，**没有 `options` 字段**。
+   于是每行都算出 `capable: false` 并渲染为**禁用**——行在，但永远点不动。
+   预设选项现在取自进程级目录 `remote.permissionPresets.catalog()`（官方选择器用的也是它）。
+
+两个 bug 形状相同：代码信任了一个**并不存在**的服务或字段，而且没有任何地方报错。
+它们之所以没被测出来，是因为测试桩比真实宿主**更丰富**（桩提供了 `settingsScope`，
+还凭空造了 `permissions.options`）。`test/host-api.cjs` 现在专门盯住这类问题。
+
 ### 设置页
 
-`设置 → 插件 → 快捷键工具包`，只保留插件自身的东西：指向官方快捷键界面的说明，以及模型搜索子插件开关。
+`设置 → 插件 → 快捷键工具包`，只保留插件自身的东西：指向官方快捷键界面的说明、五个快捷键开关，以及模型搜索子插件开关。
 
 ### Web / Desktop 双载体
 
@@ -65,7 +102,7 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
 - **Web 载体下自动降级**：重启 DSH 与三个模式切换只声明 Desktop 档位、且在浏览器里会被拒绝执行；设置页会给出说明；
 - **`Ctrl+R` 由官方 `page.refresh` 承担**，两种载体下都可用（Desktop 走宿主动作，Web 回退为浏览器刷新）；
 - **陈旧绑定不会打空**：若组合键是在 Desktop 下录制的，之后在 Web 载体按到「重启 / 模式切换」会被 `blocked`，不会向不存在的 `/api/desktop/*` 端点发请求；
-- **不绑定不存在的设置命名空间**：`dsh-desktop` 是 Desktop 专有命名空间，Web 载体下不会绑定该作用域。
+- **不解析不存在的设置表单**：`dsh-desktop` 是 Desktop 专有命名空间，Web 载体下不会去取它的配置表单。
 - 模型搜索子插件与工作区权限面板**在两种载体下完全一致**，不受载体影响。
 
 ### 快捷键归属
@@ -90,8 +127,8 @@ dsh plugin --profile web add "link:H:/Github/dsh-hotkey-toolkit"
 dsh plugin --profile desktop add "link:H:/Github/dsh-hotkey-toolkit"
 
 # 2) 从 tarball 安装（不带源码，最干净）
-npm pack                                  # 生成 dsh-hotkey-toolkit-1.5.0.tgz
-dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.5.0.tgz"
+npm pack                                  # 生成 dsh-hotkey-toolkit-1.6.0.tgz
+dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.6.0.tgz"
 
 # 3) 从 npm 安装（发布后）
 dsh plugin --profile web add dsh-hotkey-toolkit
@@ -115,7 +152,7 @@ dsh plugin --profile web add dsh-hotkey-toolkit
 ## 开发
 
 ```bash
-npm test          # 无依赖：键位审计 + 词典完整性 + 模型席位 + 子插件开关 + 权限面板 + 双载体
+npm test          # 无依赖：键位审计 + 词典 + 宿主 API 兼容 + 模型席位 + 子插件/命令开关 + 权限面板 + 双载体
 npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位（含抗崩退回归）
 ```
 
@@ -126,22 +163,31 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
   从 `client.js` 里取出真实默认值表，断言 247 个「命令 × 档位」组合全部合法，且与 18 条官方核心默认值零冲突；
   并带**反向对照**（`Ctrl+R`、裸 `Esc`、`Ctrl+C`、`Numpad0` 必须被判非法），确保审计本身不是空转。
   它还断言 Web 档位**保持不绑定**——这正是开发时抓到真实违规的那条断言。
+- `test/host-api.cjs`：**宿主 API 兼容**。专门盯住「插件信任了宿主并不提供的服务或字段」这一类**静默**失败：
+  静态检查（先剥掉注释，只查活代码）断言源码不再出现已被移除的 `settingsScope`，
+  也不再从 `permissions` 投影读取并不存在的 `options`；
+  行为检查则在**两种载体**上，仅用 DSH 0.1.7 真实提供的接口激活插件，断言权限面板确实调用了
+  `remote.settings.describe()` 与 `remote.permissionPresets.catalog()`，
+  且 `dsh-desktop` 表单只在 Desktop 载体解析一次。两个已修 bug 都用变异测试验证过能被它抓到。
 - `test/dictionaries.cjs`：词典完整性。断言 `zh`/`en` 与 `seatZh`/`seatEn` 键集完全一致、
   代码里每一个字面量 `t("key")` 都存在、以及快捷键标签键（含 `"cmdMode" + mode…` 这种动态拼接）都存在。
   宿主本地化**不跨命名空间回退**，缺键会直接把原始键名显示给用户。
 - `test/model-seat.cjs`：以桩化 react 加载真实 `client.js`，断言打开菜单先落在「模型 / 推理等级」两行、
   进入模型列表后搜索框位于模型选项**上方**、过滤 / Enter 选中 / Esc 逐级返回、推理等级入口可达，
   并校验席位词典 zh/en 键一致。其词典桩严格复刻宿主的解析规则（**仅在本命名空间查找，不跨命名空间回退**）。
-- `test/seat-toggle.cjs`：**子插件开关**。真实渲染设置页、找到模型搜索开关并调用它的 `onChange`，
-  断言：关闭后席位被注销（官方菜单回归）、**再次开启会重新调用 `slots.inject`**
+- `test/seat-toggle.cjs`：**子插件与命令开关**。真实渲染设置页、按行标签定位开关并调用其 `onChange`，断言：
+  模型搜索关闭后席位被注销（官方菜单回归）、**再次开启会重新调用 `slots.inject`**
   （已注销的句柄不能复用，这是最容易写成「单向开关」的地方）、重复关闭幂等、
+  五个命令开关各自独立且默认开启、关闭一个不影响其它、缺失的键取默认开，
   以及存量 OFF / 缺省 / 旧版 1.4 载荷 / 损坏 JSON 四种输入都能正确降级。
 - `test/smoke.cjs`：权限面板渲染 + 下拉 Portal + 点击切换 + 默认权限写入。
+  它的宿主桩**只提供真实存在的接口**（会话投影里没有 `options`，也不提供 `settingsScope`），
+  并额外断言会话行的选择器**没有被禁用**——这条正是修好「权限管理不可用」的回归守卫。
 - `test/platform.cjs`：Web/Desktop 双载体回归。以「有 preload 桥」「只有 URL 标记」「两者都没有」三种页面加载真实 `client.js`，
   断言插件**不再安装自己的全局 keydown 监听**（键盘归官方服务独有）、五个命令都已贡献给官方服务、
   Desktop-only 命令**不含任何 Web 档位默认值**且在 Web 下 `resolve` 返回 `blocked`、
   「刷新界面」默认不绑定、Web 下刷新回退为页面刷新、Desktop 下走宿主动作、
-  以及仅在 Desktop 载体绑定一次 `dsh-desktop` 作用域；并校验两个命名空间 zh/en 键集合完全一致。
+  以及仅在 Desktop 载体解析一次 `dsh-desktop` 配置表单；并校验两个命名空间 zh/en 键集合完全一致。
 - `test/model-seat-dom.cjs`（可选）：用真实 React 18 + jsdom 渲染并驱动席位，验证根菜单只有「模型 / 推理等级」两行、搜索框位于模型列表首位、占位符为真实译文、过滤收敛、Enter 选中。
 - `test/model-seat-resilience.cjs`（可选）：抗崩退回归。席位是「遮蔽官方」的单选席位，**首次渲染出错就会被席位运行时退役（abdicate）**，此后整段会话都退回官方两级菜单、搜索框消失。该套件用残缺快照（缺 `groups`/`failures`、空对象、`reasoning` 无 `efforts`）与「会话未解析导致 `directoryFor` 抛错」两类冷启动输入，断言搜索框依然渲染、注册不被中断。两个 DOM 套件都需指定依赖目录：
   ```bash
@@ -166,9 +212,11 @@ node tools/verify-profile.cjs web
 - Desktop 专有的命令在 Web 载体下是**不声明默认键位 + `resolve` 拒绝**，而不是「渲染成灰色行」——置灰会暗示「装上 Desktop 就能用」以外的含义，而这里缺的是宿主能力，不是用户权限。
 - 载体说明文案注册在主命名空间 `hotkeyToolkit`（`webCarrierNote` / `desktopOnly` / `scopeUnavailable`），与席位命名空间彼此独立。
 - **键盘监听只有一个**：插件删除了自己的全局 `keydown` 监听，键盘完全交给官方快捷键服务，避免两套监听在捕获阶段互相竞争、以及两套录制器各自持有不同的键位真相。
-- **快捷键持久化不在插件里**：宿主偏好文档是唯一真相（Web `dsh.keybindings.v1`，Desktop `userData/keybindings.json`）。插件的 localStorage 现在只存模型搜索开关。
-- **旧版载荷兼容**：1.4 及更早写入的 `{ enabled, refresh, restart, modes }` 会被识别并忽略未知字段，只保留模型搜索开关，因此升级不会丢失该偏好。
+- **快捷键持久化不在插件里**：宿主偏好文档是唯一真相（Web `dsh.keybindings.v1`，Desktop `userData/keybindings.json`）。插件的 localStorage 现在只存模型搜索开关与五个命令开关。
+- **命令开关拦的是动作，不是绑定**：这样既不会让官方界面里正在编辑的草稿失效，也不会让用户录制的组合键在停用期间丢失；停用返回 `pass` 而非 `blocked`，避免吞掉用户真正想按的键。
+- **旧版载荷兼容**：1.4 及更早写入的 `{ enabled, refresh, restart, modes }` 会被识别并忽略未知字段，只保留模型搜索开关，因此升级不会丢失该偏好；`shortcuts` 逐键合并，缺失的键取默认（开）。
 - `shortcuts` 服务用 `ctx.inject(['shortcuts'], …)` **惰性注入**，而不是写进插件顶层 `inject`：这样即使某个载体没有该服务，设置页、权限面板、模型席位依然可用，只有快捷键缺失，而不是整个插件停在 PENDING。
+- **依赖宿主服务一律用 `ctx.inject` 惰性获取，并对其缺失保持可降级**：DSH 0.1.7 移除了 `settingsScope`（改为 `configForms`），而嵌套 `inject` 对不存在的服务**既不报错也不激活失败**——回调静默不执行。因此面板侧的探测失败会写入 `window.__dshHotkeyPanel` 并打日志，把「面板莫名空白」变成一行可读答案。
 - 注册失败会被 `try/catch` 收敛成「没有快捷键」并打日志，不会让 `apply()` 抛错——插件退化是可接受的，插件加载失败不是。
 - 模型搜索通过遮蔽官方 `conversation.input.model` 席位实现；关闭开关或席位出错时，官方模型选择会自动恢复。
 - 正因如此，席位**不能抛错**：席位运行时对遮蔽型席位采用「一崩即退役」策略，首次渲染异常就会让本席位永久退场（直到重载），表现就是搜索框消失、官方两级菜单回归。因此席位对宿主快照做了防御性归一（`groups`/`failures` 非数组即降级为空），`directoryFor` 抛错时降级为只读空列表，而不是把异常抛给渲染器。
