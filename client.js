@@ -1506,7 +1506,7 @@ window.__ModuleLoader__.load({
 			 */
 			ctx.inject(["shortcuts"], (scope) => {
 				const shortcuts = scope.shortcuts;
-				/* A Localized label thunk: the registry re-reads it on every locale change. */
+				/* A localized label thunk: the registry re-reads it on every locale change. */
 				const label = (key) => () => translate(key);
 				/**
 				 * Register one command, refusing to let a validation failure propagate.
