@@ -51,7 +51,9 @@ global.window = {
 const React = {
   createElement: (type, props, ...children) => ({ $$el: true, type, props: props ?? {}, children: children.flat(Infinity) }),
   Fragment: "Fragment",
-  useState: (initial) => [initial, () => {}],
+  // Real React supports a LAZY initializer (`useState(() => x)`); the stub must
+  // too, or a component initializing a Set that way sees the function itself.
+  useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
   useRef: (initial) => ({ current: initial === undefined ? null : initial }),
   useMemo: (fn) => fn(),
   useEffect: () => {},

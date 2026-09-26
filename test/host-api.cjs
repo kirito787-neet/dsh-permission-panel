@@ -150,6 +150,50 @@ if (!live.includes('"settingsSchema"')) {
   throw new Error("client.js no longer injects 'settingsSchema'; the permission panel's settings binding would never run");
 }
 
+/*
+ * The permission panel must dispatch commands BY SESSION ID, not through a
+ * client-side binding.
+ *
+ * `sessions.binding(id)` only returns a binding for a scope that ALREADY exists —
+ * it never materializes one; `retain()` does. The panel lists every session, so
+ * reaching for the binding meant every session the user had not opened threw
+ * "该会话暂时无法下发指令（尚未装载）": the panel could only ever drive the handful of
+ * sessions that happened to be open.
+ *
+ * `remote.commands.execute(sessionId, line, [])` takes the id directly and the
+ * Host RESUMES a cold session on demand, so it has no such restriction. This is
+ * the surface the official ui-plan chip uses.
+ *
+ * `dispatchCommand` keeps a binding lookup as a DOCUMENTED last-resort fallback
+ * for a carrier that composes sessions without `remote.commands`; that one is
+ * legitimate. What must not come back is a PANEL-LEVEL binding lookup — the
+ * per-row path that made unopened sessions unusable.
+ */
+if (/binding\(row\.id\)/u.test(live)) {
+  throw new Error("client.js resolves a per-row client-side session binding to dispatch a command. "
+    + "`binding()` never materializes a scope, so any session the user has not opened refuses with "
+    + "\"not materialized yet\". Dispatch by id through remote.commands.execute instead.");
+}
+/*
+ * The remote path must be the PRIMARY one, not merely present.
+ *
+ * A textual "does `execute(id, line, [])` appear" check is not enough: the
+ * fallback branch contains the same call, so disabling the remote path entirely
+ * (leaving only the binding fallback) still matched and the guard stayed green.
+ * That was caught by mutation testing, and this is the fix — assert the remote
+ * call is reached under a real condition, by requiring the guard clause that
+ * precedes it.
+ */
+if (!/typeof remoteCommands\.execute === "function"/u.test(live)) {
+  throw new Error("client.js no longer gates on `typeof remoteCommands.execute === 'function'`; "
+    + "the by-id dispatch path has been disabled and only the binding fallback remains, which "
+    + "cannot reach sessions the user has not opened");
+}
+if (!/\.execute\(id, line, \[\]\)/u.test(live)) {
+  throw new Error("client.js no longer dispatches through commands.execute(id, line, []); "
+    + "the panel would fall back to a path that only works for already-open sessions");
+}
+
 // ---- behavioural check: activate against the real 0.1.7 surface only ----
 let captured = null;
 global.document = {
@@ -173,7 +217,9 @@ global.window = {
 const React = {
   createElement: (type, props, ...children) => ({ $$el: true, type, props: props ?? {}, children: children.flat(Infinity) }),
   Fragment: "Fragment",
-  useState: (initial) => [initial, () => {}],
+  // Real React supports a LAZY initializer (`useState(() => x)`); the stub must
+  // too, or a component initializing a Set that way sees the function itself.
+  useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
   useRef: (initial) => ({ current: initial === undefined ? null : initial }),
   useMemo: (fn) => fn(),
   useEffect: () => {},

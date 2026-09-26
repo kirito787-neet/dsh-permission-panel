@@ -86,6 +86,14 @@ window.__ModuleLoader__.load({
 			wpRefresh: "刷新列表",
 			wpEmpty: "当前没有会话。",
 			wpArchivedSkipped: "已跳过已归档会话：",
+			wpSelectAll: "全选可管理会话",
+			wpSelectOne: "选择会话 {name}",
+			wpSelectedCount: "已选 {n} 个会话",
+			wpBulkApply: "应用到所选",
+			wpBulkWorking: "正在应用…",
+			wpBulkClear: "清除选择",
+			wpBulkDone: "已修改 {n} 个会话，{s} 个无需变动。",
+			wpBulkFailed: "{n} 个会话修改失败：{d}",
 			wpUnavailable: "不可用",
 			wpLoadFailed: "默认权限加载失败：",
 			wpApplied: "已切换到 ",
@@ -157,6 +165,14 @@ window.__ModuleLoader__.load({
 			wpRefresh: "Refresh list",
 			wpEmpty: "No sessions right now.",
 			wpArchivedSkipped: "Archived sessions skipped: ",
+			wpSelectAll: "Select every manageable session",
+			wpSelectOne: "Select session {name}",
+			wpSelectedCount: "{n} selected",
+			wpBulkApply: "Apply to selected",
+			wpBulkWorking: "Applying…",
+			wpBulkClear: "Clear selection",
+			wpBulkDone: "Changed {n} session(s); {s} needed no change.",
+			wpBulkFailed: "{n} session(s) failed: {d}",
 			wpUnavailable: "Unavailable",
 			wpLoadFailed: "Failed to load the default permission: ",
 			wpApplied: "Switched to ",
@@ -249,6 +265,12 @@ window.__ModuleLoader__.load({
 		".dshk-wpHead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}",
 		".dshk-wpRow{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.16))}",
 		".dshk-wpRow:first-of-type{border-top:none}",
+		".dshk-wpRowPicked{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));border-radius:8px}",
+		".dshk-wpHeadMain{display:flex;align-items:center;gap:8px;min-width:0}",
+		".dshk-pickAll,.dshk-pick{width:15px;height:15px;flex:none;margin:0;accent-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0);cursor:pointer}",
+		".dshk-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;margin:6px 0 2px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.06))}",
+		".dshk-bulkCount{font-size:12px;color:var(--dsw-alias-label-secondary,#c8ccd4);white-space:nowrap}",
+		".dshk-bulkApply{margin-left:auto}",
 		".dshk-wpAvatar{flex:none;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:11px;font-weight:600;color:#fff}",
 		".dshk-wpCopy{flex:1;min-width:0}",
 		".dshk-wpTitle{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
@@ -657,6 +679,14 @@ window.__ModuleLoader__.load({
 
 		/** Preset machine value that must pass an explicit risk gate before switching. */
 		const FULL_ACCESS_PRESET = "danger-full-access";
+		/**
+		 * How many per-session failures a bulk run spells out before summarizing.
+		 *
+		 * A failed switch is worth naming — "3 failed" without saying which is not
+		 * actionable. But an unbounded join would turn a systemic outage (every session
+		 * refusing) into a wall of text that buries the first real cause.
+		 */
+		const MAX_REPORTED_FAILURES = 5;
 		/** Built-in preset labels, per locale dictionary key. */
 		const PRESET_LABEL_KEYS = {
 			"read-only": "wpPresetReadOnly",
@@ -682,6 +712,91 @@ window.__ModuleLoader__.load({
 				(listener) => sessionsStore.subscribe(listener),
 				() => sessionsStore.getSnapshot(),
 			);
+		}
+
+		/**
+		 * Ask the Host for one session's projections, without opening it.
+		 *
+		 * WHY THIS EXISTS. The panel lists EVERY session, but a session the user has
+		 * never opened carries no `permissions` projection: `sessions.list` fills
+		 * `projectionValues` only from what the Host has already pushed (the live
+		 * control baseline, or list hints from the persisted checkpoint). A row whose
+		 * projection is absent cannot know its current preset, so `current` is null
+		 * and the row renders as "unavailable" — which is exactly the "some sessions
+		 * still show unavailable" half of the report.
+		 *
+		 * `refreshProjections(id)` is the supported cold read: it goes through
+		 * `remote.session.projections`, which is answered by a Host-side
+		 * `observeSession` that never activates an Agent. That is the whole point —
+		 * reading a preset must not be as expensive as opening the conversation, and
+		 * must not depend on the user having visited the session.
+		 *
+		 * Deliberately NOT `retain()`: retaining materializes a client scope and
+		 * starts the session's history `open()`, so doing it for every row would open
+		 * every conversation in the sidebar. Projections are the cheap, purpose-built
+		 * read for exactly this "show me metadata about sessions I have not opened"
+		 * case.
+		 *
+		 * Failures are swallowed on purpose: a session whose projection cannot be read
+		 * keeps its row, disabled, and the panel's own refresh can retry. Throwing here
+		 * would take out the whole list because one session misbehaved.
+		 * @param id - session to read projections for.
+		 */
+		function ensureProjections(id) {
+			if (sessionsRef === null || typeof sessionsRef.refreshProjections !== "function") return;
+			Promise.resolve(sessionsRef.refreshProjections(id)).catch(() => {});
+		}
+
+		/**
+		 * Dispatch one slash command to a session BY ID, without materializing it.
+		 *
+		 * WHY NOT `binding()`. This used to be
+		 * `sessionsRef.binding(id)?.session` then `session.command(line)`, which threw
+		 * the reported "该会话暂时无法下发指令（尚未装载）" for every session the user had
+		 * not opened. `binding(id)` only returns a binding for a scope that already
+		 * exists — it never creates one; `retain()` is what materializes. So the panel
+		 * could only ever drive the handful of sessions that happened to be open.
+		 *
+		 * `remote.commands.execute(sessionId, line, [])` is the same surface the
+		 * official ui-plan chip uses, and it takes the id directly. The Host resolves
+		 * it through `resolveAgent(sessionId)`, which RESUMES a cold session on demand
+		 * — so an unopened session is a perfectly valid target, and no client-side
+		 * scope, history open, or retention is involved.
+		 *
+		 * Falls back to the binding when the remote namespace is unavailable, so a
+		 * carrier that composes sessions without `remote.commands` keeps whatever
+		 * range it had rather than losing the feature entirely.
+		 * @param remoteCommands - the `remote.commands` namespace, or undefined.
+		 * @param id - target session.
+		 * @param line - full command line, leading slash included.
+		 * @returns `{ ok: true }`, or `{ ok: false, message }` describing the refusal.
+		 */
+		async function dispatchCommand(remoteCommands, id, line) {
+			if (remoteCommands !== void 0 && remoteCommands !== null && typeof remoteCommands.execute === "function") {
+				try {
+					const result = await remoteCommands.execute(id, line, []);
+					if (!result.ok) {
+						return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
+					}
+					if (result.value === void 0) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
+					return { ok: true };
+				} catch (cause) {
+					return { ok: false, message: describe(cause) };
+				}
+			}
+			try {
+				const binding = sessionsRef !== null ? sessionsRef.binding(id) : void 0;
+				const session = binding !== void 0 && binding !== null ? binding.session : void 0;
+				if (session === void 0 || typeof session.command !== "function") return { ok: false, message: text("wpSessionUnreachable") };
+				const result = await session.command(line);
+				if (!result.ok) {
+					return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
+				}
+				if (!result.value.matched) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
+				return { ok: true };
+			} catch (cause) {
+				return { ok: false, message: describe(cause) };
+			}
 		}
 
 		/**
@@ -1597,6 +1712,7 @@ window.__ModuleLoader__.load({
 		const inject = [
 			"locale",
 			"remote",
+			"remote.commands",
 			"remote.session",
 			"remote.settings",
 			"remote.permissionPresets",
@@ -1853,6 +1969,17 @@ window.__ModuleLoader__.load({
 		const permissionPanel = {
 			/** Settings transport context (`remote`), or null until injected. */
 			settingsCtx: null,
+			/**
+			 * The `remote.commands` namespace, captured at bind time.
+			 *
+			 * Held here rather than read off `settingsCtx` at dispatch time so the
+			 * dispatcher (module scope) never has to reach into a sibling `const`
+			 * declared inside `apply`. That mistake is invisible in a bundler and
+			 * fatal at runtime: the name simply does not resolve there, so every
+			 * dispatch threw `permissionPanel is not defined` before it could send
+			 * anything — a silent "nothing happens" on every row.
+			 */
+			remoteCommands: void 0,
 			/** Latest known `permission` namespace revision, fencing writes. */
 			revision: void 0,
 			current: null,
@@ -2034,6 +2161,18 @@ window.__ModuleLoader__.load({
 		 */
 		ctx.inject(["remote"], (scope) => {
 			permissionPanel.settingsCtx = scope;
+			/*
+			 * Capture the command namespace here, where it is reachable.
+			 *
+			 * `remote.commands` is a declared dotted namespace (see the inject array),
+			 * so it resolves through this fiber. It is read ONCE and stored because the
+			 * dispatcher lives at module scope and cannot see this closure.
+			 */
+			try {
+				permissionPanel.remoteCommands = scope.remote.commands;
+			} catch (cause) {
+				reportPanelFailure("remote.commands", cause);
+			}
 		});
 
 		/*
@@ -2067,10 +2206,24 @@ window.__ModuleLoader__.load({
 			};
 		});
 
-		/** One permission row: session title, optional tags, and the preset selector. */
+		/** One permission row: optional selection box, session title, tags, preset selector. */
 		function PermissionRow(props) {
-			const { t, title, subtitle, tags, value, options, disabled, onSwitch } = props;
-			return React.createElement("div", { className: "dshk-wpRow", key: title }, [
+			const { t, title, subtitle, tags, value, options, disabled, onSwitch, selectable, selected, onToggle } = props;
+			return React.createElement("div", { className: "dshk-wpRow" + (selected === true ? " dshk-wpRowPicked" : ""), key: title }, [
+				/*
+				 * The checkbox is rendered ONLY for a row that can actually be changed.
+				 * Offering a tick on an unusable row would let the user build a selection
+				 * that the Apply step then silently skips — the count and the outcome
+				 * would disagree, which is worse than not offering it.
+				 */
+				selectable === true ? React.createElement("input", {
+					type: "checkbox",
+					className: "dshk-pick",
+					key: "pick",
+					checked: selected === true,
+					"aria-label": t("wpSelectOne").replace("{name}", title),
+					onChange: onToggle,
+				}) : null,
 				avatarOf(title),
 				React.createElement("div", { className: "dshk-wpCopy", key: "copy" }, [
 					React.createElement("div", { className: "dshk-wpTitle", key: "t" }, title),
@@ -2211,12 +2364,49 @@ window.__ModuleLoader__.load({
 			const [gate, setGate] = React.useState(null);
 			const [acknowledged, setAcknowledged] = React.useState(false);
 			const [problem, setProblem] = React.useState(null);
+			/** Ids ticked for a bulk change; cleared after a successful run. */
+			const [selected, setSelected] = React.useState(() => new Set());
+			/** Chosen preset in the bulk bar; null until the user picks one. */
+			const [bulkPreset, setBulkPreset] = React.useState(null);
+			const [bulkBusy, setBulkBusy] = React.useState(false);
 			/** Portal host for the centered confirmation; <body> escapes the panel scroll box. */
 			const gateHost = typeof document === "undefined" ? null : document.body;
 
 			React.useEffect(() => {
 				panel.load();
 			}, [panel]);
+
+			/*
+			 * Pull the `permissions` projection for every listed session.
+			 *
+			 * The list snapshot only carries projections the Host has already pushed:
+			 * the live control baseline, or cached list hints read from the persisted
+			 * checkpoint. A session the user has never opened generally has neither, so
+			 * `projectionValues.permissions` is absent, `current` is null, and the row
+			 * renders as "不可用" even though nothing is wrong with it. Reading the
+			 * projection explicitly is what makes an unopened session show its real
+			 * preset — and it deliberately does NOT open the session: the Host answers
+			 * this read from a plain observation, never activating an Agent.
+			 *
+			 * Keyed on the id LIST, not on the snapshot object: the snapshot identity
+			 * changes on every unrelated field (running flags, retention counts), and
+			 * re-reading every projection each time would hammer the Host for no reason.
+			 * The effect re-runs when the set of sessions changes, which is precisely
+			 * when there is something new to read.
+			 *
+			 * Already-answered sessions short-circuit inside the manager (a `ready`
+			 * projection load returns immediately), so the re-run is cheap.
+			 */
+			const sessionKey = sessions.ids.join("\n");
+			React.useEffect(() => {
+				for (const id of sessions.ids) {
+					const summary = sessions.byId[id];
+					if (summary === void 0 || summary.parentId !== void 0) continue;
+					if (archivedIds.has(id)) continue;
+					if (summary.projectionValues !== void 0 && summary.projectionValues.permissions !== void 0) continue;
+					ensureProjections(id);
+				}
+			}, [sessionKey, archivedIds]);
 
 			React.useEffect(() => {
 				if (gate === null) return;
@@ -2296,6 +2486,43 @@ window.__ModuleLoader__.load({
 				return count;
 			}, [sessions, archivedIds]);
 
+			/** Rows that can actually be acted on, i.e. the only ones worth offering. */
+			const selectableRows = React.useMemo(
+				() => rows.filter((row) => row.capable === true),
+				[rows],
+			);
+
+			/*
+			 * Prune the selection against the CURRENT row set.
+			 *
+			 * A ticked id can disappear (session removed, archived, or its projection
+			 * failed to load). Left alone, the bulk bar would keep claiming "3 selected"
+			 * for rows that no longer exist, and "apply to selected" would silently target
+			 * fewer sessions than the user believes. Intersecting on read keeps the count
+			 * honest without needing a cleanup effect racing the render.
+			 */
+			const effectiveSelection = React.useMemo(() => {
+				const live = new Set(selectableRows.map((row) => row.id));
+				return new Set([...selected].filter((id) => live.has(id)));
+			}, [selected, selectableRows]);
+
+			const selectedCount = effectiveSelection.size;
+			const allSelected = selectableRows.length > 0 && selectedCount === selectableRows.length;
+
+			/** Toggle one row's membership. */
+			const toggleSelected = (id) => {
+				setSelected((previous) => {
+					const next = new Set(previous);
+					if (next.has(id)) next.delete(id);
+					else next.add(id);
+					return next;
+				});
+			};
+
+			const toggleAll = () => {
+				setSelected(() => (allSelected ? new Set() : new Set(selectableRows.map((row) => row.id))));
+			};
+
 			/*
 			 * Apply a preset to one session: the part that actually talks to the Host.
 			 *
@@ -2303,22 +2530,85 @@ window.__ModuleLoader__.load({
 			 * switchSession() again, which re-detected "full access from a non-full-access
 			 * session" (row.current has not changed yet) and reopened the very dialog just
 			 * confirmed - so Full access was never applied, only re-confirmed forever.
+			 *
+			 * Dispatches BY SESSION ID (see `dispatchCommand`) so a session the user has
+			 * never opened is a valid target. Reaching for the client-side binding here is
+			 * what produced "该会话暂时无法下发指令（尚未装载）" for every unopened session.
+			 * @returns true when the Host accepted the switch.
 			 */
 			const applySessionPreset = async (row, preset) => {
 				setProblem(null);
-				if (row.capable !== true) return;
-				if (preset === row.current) return;
-				try {
-					const binding = sessionsRef !== null ? sessionsRef.binding(row.id) : void 0;
-					const session = binding !== void 0 && binding !== null ? binding.session : void 0;
-					if (session === void 0 || typeof session.command !== "function") throw new Error(text("wpSessionUnreachable"));
-					const result = await session.command("/permission " + preset);
-					if (!result.ok) throw new Error(result.error && result.error.message ? result.error.message : String(result.error));
-					if (!result.value.matched) throw new Error("the host offers no /permission command");
-					notify(text("wpApplied") + presetLabel(preset, t));
-				} catch (cause) {
-					setProblem(text("wpSwitchFailed") + describe(cause));
+				if (row.capable !== true) return false;
+				if (preset === row.current) return true;
+				const result = await dispatchCommand(panel.remoteCommands, row.id, "/permission " + preset);
+				if (!result.ok) {
+					setProblem(text("wpSwitchFailed") + result.message);
+					return false;
 				}
+				notify(text("wpApplied") + presetLabel(preset, t));
+				return true;
+			};
+
+			/**
+			 * Apply one preset to every selected session.
+			 *
+			 * Sequential, not `Promise.all`: each switch is a Host command on a distinct
+			 * session, and firing a hundred of them at once buys nothing while making the
+			 * failure story unreadable (which of N interleaved rejections was the cause?).
+			 * One at a time keeps the first real error attributable.
+			 *
+			 * Partial success is reported as partial. Silently claiming success when three
+			 * of ten sessions refused would be worse than the original bug: the user would
+			 * believe a permission change that never happened.
+			 * @param preset - preset key to apply to every selected row.
+			 */
+			const applyBulkPreset = async (preset) => {
+				setProblem(null);
+				const live = new Set(selectableRows.map((row) => row.id));
+				const targets = rows.filter((row) => effectiveSelection.has(row.id) && live.has(row.id));
+				if (targets.length === 0) return;
+				setBulkBusy(true);
+				let changed = 0;
+				let skipped = 0;
+				const failures = [];
+				try {
+					for (const row of targets) {
+						if (preset === row.current) { skipped += 1; continue; }
+						const result = await dispatchCommand(panel.remoteCommands, row.id, "/permission " + preset);
+						if (result.ok) changed += 1;
+						else failures.push(row.title + ": " + result.message);
+					}
+				} finally {
+					setBulkBusy(false);
+				}
+				if (failures.length === 0) {
+					notify(text("wpBulkDone").replace("{n}", String(changed)).replace("{s}", String(skipped)));
+					setSelected(new Set());
+					setBulkPreset(null);
+					return;
+				}
+				const detail = failures.length > MAX_REPORTED_FAILURES
+					? failures.slice(0, MAX_REPORTED_FAILURES).join("; ") + " …(+" + (failures.length - MAX_REPORTED_FAILURES) + ")"
+					: failures.join("; ");
+				setProblem(text("wpBulkFailed").replace("{n}", String(failures.length)).replace("{d}", detail));
+			};
+
+			/**
+			 * Bulk entry point: Full access still passes the risk gate first.
+			 *
+			 * One confirmation for the whole batch, not one per session: the gate exists
+			 * to make the user consciously accept reduced confirmation, and asking ten
+			 * times for the same acceptance trains them to click through it.
+			 */
+			const requestBulk = () => {
+				setProblem(null);
+				if (bulkPreset === null || selectedCount === 0) return;
+				const targets = rows.filter((row) => effectiveSelection.has(row.id) && row.current !== FULL_ACCESS_PRESET);
+				if (bulkPreset === FULL_ACCESS_PRESET && targets.length > 0) {
+					setGate({ kind: "bulk" });
+					return;
+				}
+				applyBulkPreset(bulkPreset);
 			};
 
 			/** Route a preset choice through the Full-access confirmation gate first. */
@@ -2349,6 +2639,9 @@ window.__ModuleLoader__.load({
 					const row = rows.find((entry) => entry.id === pending.id);
 					/* Apply directly - switchSession() would reopen the gate just confirmed. */
 					if (row !== void 0) applySessionPreset(row, FULL_ACCESS_PRESET);
+				} else if (pending.kind === "bulk") {
+					/* Likewise direct: requestBulk() would reopen the gate just confirmed. */
+					applyBulkPreset(FULL_ACCESS_PRESET);
 				} else {
 					panel.select(FULL_ACCESS_PRESET).catch((cause) => setProblem(text("wpDefaultFailed") + describe(cause)));
 				}
@@ -2377,6 +2670,13 @@ window.__ModuleLoader__.load({
 				? [{ value: panel.current, label: presetLabel(panel.current, t) }, ...defaultChoices]
 				: defaultChoices;
 			const defaultBusy = panel.status === "loading" || panel.status === "saving";
+			/*
+			 * The bulk picker offers the same selectable presets as a row. It starts
+			 * with no value (null) rather than defaulting to a preset: a bulk control
+			 * that arrives pre-armed is one stray click away from changing every
+			 * selected session, and Apply stays disabled until a choice is made.
+			 */
+			const bulkOptions = panel.catalog.map((option) => ({ value: option.value, label: presetLabel(option.value, t) }));
 			const defaultState = panel.status === "error"
 				? text("wpLoadFailed") + (panel.error ?? "")
 				: panel.status === "unavailable" ? t("wpUnavailable") : null;
@@ -2398,7 +2698,20 @@ window.__ModuleLoader__.load({
 				]),
 				React.createElement("div", { className: "dshk-card", key: "sessions" }, [
 					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
-						React.createElement("h4", { key: "h" }, t("wpSessionSection") + " · " + t("wpCount") + rows.length),
+						React.createElement("div", { className: "dshk-wpHeadMain", key: "hmain" }, [
+							/*
+							 * Select-all lives beside the heading, and only when there is
+							 * something selectable: a disabled checkbox over an empty or
+							 * entirely unreadable list is noise that promises nothing.
+							 */
+							selectableRows.length > 0 ? React.createElement("label", { className: "dshk-pickAll", key: "all", title: t("wpSelectAll") }, React.createElement("input", {
+								type: "checkbox",
+								checked: allSelected,
+								"aria-label": t("wpSelectAll"),
+								onChange: toggleAll,
+							})) : null,
+							React.createElement("h4", { key: "h" }, t("wpSessionSection") + " · " + t("wpCount") + rows.length),
+						]),
 						React.createElement("button", {
 							type: "button",
 							className: "dshk-btn",
@@ -2408,6 +2721,40 @@ window.__ModuleLoader__.load({
 							},
 						}, t("wpRefresh")),
 					]),
+					/*
+					 * The bulk bar appears only once something is ticked. It carries its own
+					 * preset picker and Apply button so the whole batch is one decision, and
+					 * it shows the count because "apply to selected" is only trustworthy if
+					 * the user can see how many that is.
+					 */
+					selectedCount > 0 ? React.createElement("div", { className: "dshk-bulk", key: "bulk" }, [
+						React.createElement("span", { className: "dshk-bulkCount", key: "c" }, t("wpSelectedCount").replace("{n}", String(selectedCount))),
+						React.createElement(PresetDropdown, {
+							key: "sel",
+							value: bulkPreset,
+							options: bulkOptions,
+							disabled: bulkBusy,
+							onSwitch: (preset) => setBulkPreset(preset),
+							t,
+						}),
+						React.createElement("button", {
+							type: "button",
+							className: "dshk-btn dshk-bulkApply",
+							key: "apply",
+							disabled: bulkPreset === null || bulkBusy,
+							onClick: requestBulk,
+						}, bulkBusy ? t("wpBulkWorking") : t("wpBulkApply")),
+						React.createElement("button", {
+							type: "button",
+							className: "dshk-btn",
+							key: "clear",
+							disabled: bulkBusy,
+							onClick: () => {
+								setSelected(new Set());
+								setBulkPreset(null);
+							},
+						}, t("wpBulkClear")),
+					]) : null,
 					rows.length === 0 ? React.createElement("div", { className: "dshk-wpState", key: "empty" }, t("wpEmpty")) : rows.map((row) => React.createElement(PermissionRow, {
 						key: row.id,
 						t,
@@ -2418,6 +2765,10 @@ window.__ModuleLoader__.load({
 						options: row.options,
 						disabled: row.capable !== true,
 						onSwitch: (preset) => switchSession(row, preset),
+						/* Selection is offered only for rows that can actually be changed. */
+						selectable: row.capable === true,
+						selected: effectiveSelection.has(row.id),
+						onToggle: () => toggleSelected(row.id),
 					})),
 					/*
 					 * Say out loud what the archive filter removed. A row that vanishes

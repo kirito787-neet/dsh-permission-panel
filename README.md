@@ -74,11 +74,19 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
 - 切换到「完全权限」前会弹出风险确认，且确认框是**窗口居中的模态框**（Portal 挂到 `<body>` 的固定遮罩层，独立于面板滚动容器），不再渲染在会话列表末尾——列表很长时无需滚到底部；支持 Esc 与点击遮罩关闭；
 - 下拉为 Portal 渲染、视口内自动翻转避让，支持点击外部 / Esc 关闭；
 - 会话列表支持手动刷新，子会话不出现在列表中；
+- **批量修改**：每行左侧勾选框，卡片标题旁的「全选」可一次勾选全部可管理会话；勾选后出现批量操作条，
+  显示已选数量、一个预设选择器与「应用到所选 / 清除选择」。**只有能真正改动的行才有勾选框**——
+  给不可用的行一个勾，等于让用户拼出一个 Apply 会悄悄跳过的选择，数量与结果会对不上。
+  Apply 在未选择预设前保持禁用（批量控件不能一上来就处于待发状态，否则一次误点就会改掉一批会话）；
+  切到「完全权限」时**整批只确认一次**，而不是每个会话弹一次——同一个确认问十遍只会训练用户无脑点过。
+  逐个下发而非并发：每个会话是一条独立的宿主命令，并发推进不了什么，却会让「到底哪条失败」变得无法归因。
+  部分成功按部分成功汇报，并把失败原因点名到会话（最多列 5 条，其余折叠计数）——把十次里失败三次说成成功，
+  比原来的 bug 更糟：用户会相信一个根本没发生的权限变更；
 - **已归档的会话不再出现在列表中**，并在卡片底部注明跳过了几个：归档意味着「这个会话已经结束了」，
   宿主自身的归档闸门会拒绝为它执行模型步骤，因此在这里给它一个权限开关等于给了一个**不会起作用的控件**；
   跳过数量是明确写出来的而不是悄悄省略——行突然消失看起来像 bug，写清楚用户才知道会话还在（在归档里）。
 
-**1.7.0 修复**：此前本面板**完全不可用**，原因有四个，且都是静默失败：
+**1.8.0 修复**：此前本面板**完全不可用**，原因有六个，且都是静默失败：
 
 1. 它通过 `ctx.settingsScope` 读取设置面，而该服务在 **DSH 0.1.7 已被移除**
    （改用 `configForms`）。嵌套的 `ctx.inject(['settingsScope'], …)` **既不报错也不会让插件激活失败**——
@@ -97,10 +105,32 @@ DSH 快捷键工具包（官方快捷键体系）+ 输入框模型搜索子插�
    而 `defaultPreset` 的真实 schema 是 `z.string().volatile()`——一个**没有枚举的裸字符串**，
    推导结果自然只剩当前值。官方那一行读的是目录里的 `catalog.defaultOptions`，现已改为同一来源
    （并把当前值并入列表，而不是像官方那样在缺失时抛错——抛错会把整个面板打空）。
+5. **部分会话显示「不可用」**。会话列表快照只带宿主**已经推过来**的投影（实时控制基线，
+   或从持久化检查点读到的列表提示）；用户从没打开过的会话通常两者都没有，于是
+   `projectionValues.permissions` 缺失、`current` 为 null、该行被判为不可用——**看起来像坏了，其实只是没读过**。
+   现在面板为每个列表内会话调用 `sessions.refreshProjections(id)`，走宿主的
+   `remote.session.projections`（服务端由 `observeSession` 应答，**不会激活 Agent**）。
+   这里刻意**不用 `retain()`**：retain 会实体化客户端 scope 并启动该会话的历史 `open()`，
+   为每一行这么做等于把侧栏里所有会话全部打开。投影正是为「读取我没打开过的会话的元数据」准备的廉价读。
+   副作用按 **id 列表**而非快照对象触发：快照标识会因 running 标志、引用计数等无关字段变化，
+   每变一次就重读全部投影纯属打扰宿主。
+6. **切换权限报「该会话暂时无法下发指令（尚未装载）」**。面板此前走
+   `sessionsRef.binding(id)?.session` 再 `session.command(line)`。
+   `binding(id)` 只对**已经存在**的 scope 返回绑定，它从不创建 scope——创建是 `retain()` 的职责。
+   于是面板只能驱动当时恰好打开着的那几个会话，其余一律拒绝，这正是报告里的那半句症状。
+   现在改为 `remote.commands.execute(sessionId, line, [])`：直接按 id 下发，与官方
+   `ui-plan` 芯片用的是同一个面；宿主侧经 `resolveAgent(sessionId)` **按需恢复**冷会话，
+   所以未打开的会话是完全合法的目标，不涉及客户端 scope、历史打开或引用计数。
+   `dispatchCommand` 仍保留一条 binding 兜底分支，供「组合了 sessions 但没有 `remote.commands`」的载体使用。
 
-四个 bug 形状相同：代码信任了一个**并不存在**的服务或字段，而且没有任何地方报错。
+六个 bug 形状相同：代码信任了一个**并不存在**的服务或字段，而且没有任何地方报错。
 它们之所以没被测出来，是因为测试桩比真实宿主**更丰富**（桩提供了 `settingsScope`，
 还凭空造了 `permissions.options`）。`test/host-api.cjs` 现在专门盯住这类问题。
+
+**测试桩必须和 React / 宿主一样「不更丰富、也不更贫瘠」**：本轮修复中，
+桩的 `useState` 不支持惰性初始化（`useState(() => new Set())`），于是把函数本身当成状态，
+渲染期直接抛错；桩的 `useSyncExternalStore` 也从不调用 `subscribe`，
+导致「订阅根本没接上」的组件在测试里看起来完全健康。两者都已按真实契约修正。
 
 **硬门控 vs 软门控**：`inject` 数组里的名字是**硬要求**——服务缺失时 cordis 会让插件**永远停在 PENDING**；
 而嵌套的 `ctx.inject([...], …)` 是**软要求**——回调不执行，只有依赖它的那个功能降级。
@@ -169,8 +199,8 @@ dsh plugin --profile web add "link:H:/Github/dsh-hotkey-toolkit"
 dsh plugin --profile desktop add "link:H:/Github/dsh-hotkey-toolkit"
 
 # 2) 从 tarball 安装（不带源码，最干净）
-npm pack                                  # 生成 dsh-hotkey-toolkit-1.7.0.tgz
-dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.7.0.tgz"
+npm pack                                  # 生成 dsh-hotkey-toolkit-1.8.0.tgz
+dsh plugin --profile web add "file:<绝对路径>/dsh-hotkey-toolkit-1.8.0.tgz"
 
 # 3) 从 npm 安装（发布后）
 dsh plugin --profile web add dsh-hotkey-toolkit
@@ -210,12 +240,14 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
   也不再从 `permissions` 投影读取并不存在的 `options`；断言活代码里每一个 `remote.<ns>` 读取
   都在 `inject` 数组里声明过（嵌套命名空间各自独立门控，漏一个就是一次静默抛错）；
   断言 `workspaces` / `shortcuts` **没有**被放进硬门控 `inject` 数组（放进去＝服务缺失时整个插件永远 PENDING）；
+  断言面板**按 id 下发命令**（`commands.execute(id, line, [])` 且门控条件仍在），
+  不再出现 per-row 的 `binding(row.id)`——那是「尚未装载」的成因；
   行为检查则在**两种载体**上，仅用 DSH 0.1.7 真实提供的接口激活插件，断言权限面板确实调用了
   `remote.settings.describe()` 与 `remote.permissionPresets.catalog()`、
   `dsh-desktop` 表单只在 Desktop 载体解析一次，
   渲染面板断言**已归档会话不出现在行里**、活跃会话在、跳过数量被报告，
   并断言「新会话默认权限」下拉取的是 `defaultOptions` 而非 `options`。
-  四个已修 bug 与归档过滤都用变异测试验证过能被它抓到。
+  六个已修 bug 与归档过滤都用变异测试验证过能被它抓到。
 - `test/dictionaries.cjs`：词典完整性。断言 `zh`/`en` 与 `seatZh`/`seatEn` 键集完全一致、
   代码里每一个字面量 `t("key")` 都存在、以及快捷键标签键（含 `"cmdMode" + mode…` 这种动态拼接）都存在。
   宿主本地化**不跨命名空间回退**，缺键会直接把原始键名显示给用户。
@@ -227,10 +259,13 @@ npm run test:dom  # 可选：用真实 React + jsdom 渲染并驱动模型席位
   （已注销的句柄不能复用，这是最容易写成「单向开关」的地方）、重复关闭幂等、
   五个命令开关各自独立且默认开启、关闭一个不影响其它、缺失的键取默认开，
   以及存量 OFF / 缺省 / 旧版 1.4 载荷 / 损坏 JSON 四种输入都能正确降级。
-- `test/smoke.cjs`：权限面板渲染 + 下拉 Portal + 点击切换 + 默认权限写入。
+- `test/smoke.cjs`：权限面板渲染 + 下拉 Portal + 点击切换 + 默认权限写入 + **批量修改**。
   它的宿主桩**只提供真实存在的接口**（会话投影里没有 `options`，也不提供 `settingsScope`），
   并额外断言会话行的选择器**没有被禁用**——这条正是修好「权限管理不可用」的回归守卫；
   会话夹具里放了一个**已归档**会话，断言它不出现在行里而其余会话照常，跳过数量也照常报告。
+  批量用例**只勾选两行中的一行**：全勾会让「已选」与「全部可管理行」无从区分，
+  一个忽略选择、直接改全部的实现在全勾情况下照样通过（第一版就是这么写的，变异测试当场证明该断言毫无价值）。
+  未勾选的那行被特意放在同一个预设上，使「忽略选择」必然产生第二条命令，从而无法藏身。
 - `test/platform.cjs`：Web/Desktop 双载体回归。以「有 preload 桥」「只有 URL 标记」「两者都没有」三种页面加载真实 `client.js`，
   断言插件**不再安装自己的全局 keydown 监听**（键盘归官方服务独有）、五个命令都已贡献给官方服务、
   Desktop-only 命令**不含任何 Web 档位默认值**且在 Web 下 `resolve` 返回 `blocked`、
@@ -317,5 +352,7 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'
 - 降级时不会静默吞掉原因：最后一次失败会记录在 `window.__dshHotkeySeat`（含 `where` 与 `message`）。排查时在控制台执行 `window.__dshHotkeySeat` 即可看到是 `directoryFor` 还是 `subagentAddress` 出的问题。
 - 席位文案注册在 `hotkeyToolkit.seat` 命名空间；宿主的本地化**不跨命名空间回退**，因此该命名空间必须自带席位用到的全部键（缺失时会直接显示原始键名）。
 - 权限面板读取宿主的 `permissions` 会话投影（会话列表快照自带），切换走 `/permission` 斜杠命令，默认预设走 `permission` 设置命名空间——三者都是宿主原生通道，插件自身不存储任何权限状态。
+- **读投影不等于开会话**：面板对未打开的会话调用 `sessions.refreshProjections(id)`，宿主由 `observeSession` 应答，不激活 Agent；而 `retain()` 会实体化 scope 并 `open()` 历史。列表型功能要用前者，否则「看一眼所有会话的权限」会变成「把所有会话都打开一遍」。
+- **按 id 下发命令，不要先拿 binding**：`sessions.binding(id)` 只返回已存在的 scope，从不创建；`remote.commands.execute(sessionId, line, [])` 直接按 id 走宿主 `resolveAgent()`，冷会话会被按需恢复。这是官方 `ui-plan` 芯片的做法，也是面板能管理未打开会话的原因。
 - 归档集合读自 `workspaces.list.getSnapshot().archivedSessionIds`（`IWorkspaces` 的 `WorkspaceSource`，官方侧栏用的是同一个面）。归档会话不列出、不管理，并报告跳过数量；该服务缺失时降级为**空集合**（失败开放）。
 - `workspaces` 与 `shortcuts` 走**软门控**（嵌套 `ctx.inject`），不进 `inject` 数组。硬门控数组里的名字缺失会让插件**永远停在 PENDING**，而这两个服务都只是「有更好」：`workspaces` 只细化权限面板，`shortcuts` 只提供命令。把可选服务放进硬门控，会把「某功能不可用」升级成「插件不加载」。

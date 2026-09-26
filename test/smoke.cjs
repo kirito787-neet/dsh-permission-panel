@@ -21,8 +21,11 @@ const source = fs.readFileSync(clientPath, "utf8");
 
 let captured = null;
 const portalCalls = [];
+/** Every dispatched slash command as `{ id, line }`. */
 const commandCalls = [];
 const mutateCalls = [];
+/** Sessions the panel asked the Host to read projections for. */
+const projectionReads = [];
 
 // ---- document stub (render touches it only through the portal host) ----
 const fakeBody = { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false };
@@ -56,7 +59,10 @@ let hookOwner = "root";
 let hookSlot = 0;
 const useState = (initial) => {
   const key = hookOwner + "#" + hookSlot++;
-  if (!hookSlots.has(key)) hookSlots.set(key, { value: initial });
+  // Real React supports a LAZY initializer (`useState(() => x)`). The stub used
+  // to store the function itself, so a component that initialized a Set that way
+  // rendered a function where a Set belonged. Model the real contract.
+  if (!hookSlots.has(key)) hookSlots.set(key, { value: typeof initial === "function" ? initial() : initial });
   const slot = hookSlots.get(key);
   const set = (next) => { slot.value = typeof next === "function" ? next(slot.value) : next; };
   return [slot.value, set];
@@ -104,17 +110,39 @@ const listSnapshot = {
   ids: ["s1", "s2", "s3"],
   byId: {
     s1: { id: "s1", displayTitle: "Session A", running: true, cwd: "H:/work/a", projectionValues: { permissions: permissionsOf("workspace-write") } },
-    s2: { id: "s2", displayTitle: "Session B", running: false, cwd: "H:/work/b", projectionValues: { permissions: permissionsOf("read-only") } },
-    // Archived (see the workspaces stub below): the panel must NOT list it.
-    s3: { id: "s3", displayTitle: "Session C", running: false, cwd: "H:/work/c", projectionValues: { permissions: permissionsOf("read-only") } },
+    /*
+     * Session B sits at the SAME preset Session A does, so a bulk apply that
+     * ignored the selection would try to change it too and produce a second
+     * dispatch. With Session B at `read-only` instead, an ignored selection would
+     * skip it as a no-op and the defect would hide. The fixture has to make the
+     * wrong behaviour visible, not merely detectable in principle.
+     */
+    s2: { id: "s2", displayTitle: "Session B", running: false, cwd: "H:/work/b", projectionValues: { permissions: permissionsOf("workspace-write") } },
+    /*
+     * Archived (see the workspaces stub below): the panel must NOT list it.
+     * Deliberately WITHOUT a `projectionValues` entry: if it carried one, the
+     * projection-read effect would skip it as "already known" even when the
+     * archive filter was broken, and the assertion that archived sessions are
+     * never read would pass vacuously. A missing projection makes the archive
+     * check the only thing that can suppress the read.
+     */
+    s3: { id: "s3", displayTitle: "Session C", running: false, cwd: "H:/work/c" },
   },
   current: "s1",
   phase: "ready",
 };
 const sessions = {
   list: { subscribe: () => () => {}, getSnapshot: () => listSnapshot },
-  binding: () => ({ session: { command: async (line) => { commandCalls.push(line); return { ok: true, value: { matched: true } }; } } }),
+  /*
+   * `binding()` returns undefined, exactly as it does for a session the user has
+   * never opened. This is the fixture that matters: the panel MUST NOT depend on
+   * it, because doing so is what produced "该会话暂时无法下发指令（尚未装载）".
+   * Dispatching by id through `remote.commands` is what makes an unopened session
+   * a valid target, so the stub refuses the binding path outright.
+   */
+  binding: () => undefined,
   refresh: async () => {},
+  refreshProjections: async (id) => { projectionReads.push(id); },
   subagentAddress: () => undefined,
 };
 /*
@@ -147,6 +175,20 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
 const fakeScope = {
   effect: runEffect,
   remote: {
+    /*
+     * The slash-command surface the panel dispatches through.
+     *
+     * `execute(sessionId, line, attachments)` takes the id DIRECTLY — the same
+     * surface the official ui-plan chip uses — so an unopened session is a valid
+     * target. Recording `(id, line)` here is what lets the suite assert that the
+     * panel addressed the right session, not merely that some command ran.
+     */
+    commands: {
+      execute: async (id, line) => {
+        commandCalls.push({ id, line });
+        return { ok: true, value: { matched: true } };
+      },
+    },
     // `remote.settings.describe` is how the panel reads the permission namespace;
     // `ctx.settingsScope` does not exist in DSH 0.1.7 and must not be provided
     // here, or the suite would again be testing an API the Host does not serve.
@@ -208,6 +250,12 @@ const PRESET_LABELS = {
   wpPresetFullAccess: "danger-full-access",
   wpCustom: "Custom",
   wpUnavailable: "Unavailable",
+  /*
+   * The bulk bar's count is a template, not a fixed string. Mirroring it here is
+   * what lets the suite assert the number the user actually sees — asserting on
+   * the raw key would pass for any count, including none.
+   */
+  wpSelectedCount: "{n} selected",
 };
 const translate = (key) => PRESET_LABELS[key] ?? key;
 
@@ -369,8 +417,18 @@ const openDropdown = (index) => {
   const fullAccess = optionNamed(rowA, "danger-full-access");
   fullAccess.props.onClick();
   await flush();
-  if (commandCalls.length !== 1 || commandCalls[0] !== "/permission read-only") {
+  if (commandCalls.length !== 1 || commandCalls[0].line !== "/permission read-only") {
     throw new Error("case 3/4: expected exactly one '/permission read-only' call (Full access must not fire), saw " + JSON.stringify(commandCalls));
+  }
+  /*
+   * The command must be addressed to THE SESSION THE USER CLICKED, by id. This is
+   * the assertion that the panel no longer routes through a client-side binding:
+   * `sessions.binding()` returns undefined in this fixture (as it does for any
+   * unopened session), so a regression to that path fails here rather than in the
+   * user's browser as "该会话暂时无法下发指令（尚未装载）".
+   */
+  if (commandCalls[0].id !== "s1") {
+    throw new Error("case 3/4: the command was not addressed to the clicked session by id; saw id=" + JSON.stringify(commandCalls[0].id));
   }
 
   // ---- case 5: the default-preset write goes through the settings mutate path ----
@@ -452,7 +510,7 @@ const openDropdown = (index) => {
   if (confirmBtn2.props.disabled === true) throw new Error("case 8: the enable button stayed disabled after acknowledging");
   confirmBtn2.props.onClick();
   await flush();
-  if (commandCalls.length !== 1 || commandCalls[0] !== "/permission danger-full-access") {
+  if (commandCalls.length !== 1 || commandCalls[0].line !== "/permission danger-full-access") {
     throw new Error("case 8: confirming Full access did not apply it exactly once, saw " + JSON.stringify(commandCalls));
   }
   gateTree = renderOnce(false);
@@ -478,10 +536,129 @@ const openDropdown = (index) => {
     throw new Error("case 9: Escape did not close the confirmation");
   }
 
+  // ---- case 10: unopened sessions get their projections read ----
+  /*
+   * The list snapshot carries `projectionValues` for s1/s2 in this fixture, so the
+   * panel has nothing to fetch and this assertion would pass vacuously. The real
+   * defect was a session with NO projection: the row had `current === null`, so it
+   * rendered disabled and read as "不可用". Drop one session's projection and assert
+   * the panel asks the Host for it instead of giving up.
+   */
+  const withValues = listSnapshot.byId.s2.projectionValues;
+  delete listSnapshot.byId.s2.projectionValues;
+  projectionReads.length = 0;
+  hookSlots.clear();
+  renderOnce(true);
+  await flush();
+  if (!projectionReads.includes("s2")) {
+    throw new Error("case 10: a session with no permission projection was never read from the Host; reads=" + JSON.stringify(projectionReads));
+  }
+  if (projectionReads.includes("s3")) {
+    throw new Error("case 10: the ARCHIVED session's projection was read; archived sessions are not managed here");
+  }
+  listSnapshot.byId.s2.projectionValues = withValues;
+
+  // ---- case 11: bulk select + one-click apply ----
+  hookSlots.clear();
+  let bulkTree = renderOnce(true);
+  await flush();
+  const pickBoxes = () => collect(bulkTree, (entry) => entry.props?.className === "dshk-pick");
+  if (pickBoxes().length !== 2) {
+    throw new Error("case 11: expected a selection box on each of the 2 manageable rows, saw " + pickBoxes().length);
+  }
+  /*
+   * Tick a STRICT SUBSET — one row of two.
+   *
+   * This matters. Ticking every row would make "selected" indistinguishable from
+   * "all manageable rows", so a bulk implementation that ignored the selection and
+   * targeted everything would pass. That is exactly what a first version of this
+   * case did, and a mutation proved the assertion was worthless: dropping the
+   * selection filter left the test green. One-of-two removes the ambiguity.
+   *
+   * The unticked row is left at a preset the bulk run would ALSO change, so an
+   * unselected row appearing in the dispatch list is unambiguous evidence of the
+   * defect rather than a no-op.
+   */
+  const boxes = pickBoxes();
+  const boxFor = (title) => boxes.find((box) => explain(box).includes(title) || box.props["aria-label"]?.includes(title));
+  const sessionABox = boxes[0];
+  if (sessionABox === undefined) throw new Error("case 11: no selection box on the first row");
+  sessionABox.props.onChange();
+  bulkTree = renderOnce(false);
+  const bulkBar = collect(bulkTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (bulkBar === undefined) throw new Error("case 11: ticking a row did not reveal the bulk bar");
+  /*
+   * The count must reflect the ONE row actually ticked, not the size of the list.
+   * `wpSelectedCount` is rendered as the translated key here (the harness keeps
+   * unknown keys literal), with the count substituted.
+   */
+  if (!explain(bulkBar).includes("selected")) {
+    throw new Error("case 11: the bulk bar does not report how many sessions are selected");
+  }
+  if (!/\b1\b/u.test(explain(bulkBar))) {
+    throw new Error("case 11: the bulk bar does not report the true selection size (expected 1); saw " + JSON.stringify(explain(bulkBar)));
+  }
+  /*
+   * Apply must be inert until a preset is chosen: a bulk control that arrives
+   * pre-armed would be one stray click away from rewriting every selected session.
+   */
+  const applyBtn = collect(bulkBar, (entry) => entry.props?.className?.includes("dshk-bulkApply"))[0];
+  if (applyBtn === undefined) throw new Error("case 11: the bulk bar has no apply button");
+  if (applyBtn.props.disabled !== true) {
+    throw new Error("case 11: bulk Apply is enabled with no preset chosen; it must wait for an explicit choice");
+  }
+  // Choose the preset, then apply.
+  commandCalls.length = 0;
+  /*
+   * The bulk bar's picker is identified through `dropdownOwners`, not by walking
+   * the tree: `renderNode` EXPANDS function components, so the `PresetDropdown`
+   * element no longer exists in the rendered output. Once rows are ticked the
+   * bulk bar renders between the default card and the rows, making its picker
+   * index 1 — and the row pickers shift up by one.
+   */
+  const bulkIndex = dropdownOwners.filter((entry) => entry.name === "PresetDropdown").length - 1 - 2;
+  if (bulkIndex < 0) throw new Error("case 11: the bulk bar rendered no preset picker");
+  /*
+   * Drive it the way the harness drives any dropdown: open it, then click the
+   * option. A bulk picker that cannot be opened is a bulk picker that cannot be
+   * used, so this exercises the real path rather than poking props directly.
+   */
+  bulkTree = openDropdown(bulkIndex);
+  const bulkMenuOption = optionNamed(bulkTree, "read-only");
+  if (bulkMenuOption === undefined) {
+    throw new Error("case 11: the bulk picker rendered no preset options");
+  }
+  bulkMenuOption.props.onClick();
+  bulkTree = renderOnce(false);
+  const bulkBar2 = collect(bulkTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (bulkBar2 === undefined) throw new Error("case 11: the bulk bar vanished after choosing a preset");
+  const applyBtn2 = collect(bulkBar2, (entry) => entry.props?.className?.includes("dshk-bulkApply"))[0];
+  if (applyBtn2.props.disabled === true) {
+    throw new Error("case 11: bulk Apply stayed disabled after choosing a preset");
+  }
+  applyBtn2.props.onClick();
+  await flush();
+  /*
+   * Exactly the TICKED session must be addressed, by id.
+   *
+   * The unticked row is left at workspace-write, which "read-only" would also
+   * change — so if the implementation ignored the tick and targeted every row,
+   * a second dispatch would appear here and this assertion would fail.
+   */
+  const bulkTargets = commandCalls.map((call) => call.id).sort();
+  if (bulkTargets.length !== 1 || bulkTargets[0] !== "s1") {
+    throw new Error("case 11: bulk apply must touch exactly the ticked session (s1); saw " + JSON.stringify(commandCalls));
+  }
+  if (commandCalls[0].line !== "/permission read-only") {
+    throw new Error("case 11: bulk apply sent the wrong command; saw " + JSON.stringify(commandCalls[0].line));
+  }
+
   console.log(
     "smoke ok: portals=" + portalCalls.length +
     " commands=" + JSON.stringify(commandCalls) +
-    " settings=" + JSON.stringify(mutateCalls[0][1]),
+    " settings=" + JSON.stringify(mutateCalls[0][1]) +
+    " projections-read=" + JSON.stringify(projectionReads) +
+    " bulk=" + JSON.stringify(bulkTargets),
   );
 })().catch((error) => {
   console.error("smoke FAILED:", error.message);

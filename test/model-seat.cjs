@@ -69,7 +69,9 @@ let hookOwner = "root";
 let hookSlot = 0;
 const useState = (initial) => {
   const key = hookOwner + "#" + hookSlot++;
-  if (!hookSlots.has(key)) hookSlots.set(key, { value: initial });
+  // Real React supports a LAZY initializer (`useState(() => x)`); the stub must
+  // too, or a component initializing a Set that way sees the function itself.
+  if (!hookSlots.has(key)) hookSlots.set(key, { value: typeof initial === "function" ? initial() : initial });
   const slot = hookSlots.get(key);
   const set = (next) => { slot.value = typeof next === "function" ? next(slot.value) : next; };
   return [slot.value, set];
