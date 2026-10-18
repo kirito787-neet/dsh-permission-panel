@@ -87,7 +87,6 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
 function loadPlugin({ bridge, search, omit = [] }) {
   const reloads = [];
   const fetches = [];
-  const formReads = [];
   const commands = new Map();
   const registrations = new Map();
   /** Every `remote.settings.describe()` call: proof the settings binding fired. */
@@ -120,67 +119,64 @@ function loadPlugin({ bridge, search, omit = [] }) {
   if (captured === null) throw new Error("client.js never called __ModuleLoader__.load");
 
   /*
-   * `configForms` is the DSH 0.1.7 settings surface. `settingsScope` is NOT
-   * provided here on purpose: it was removed in 0.1.7, and a stub that still
-   * offers it would let the plugin keep depending on a service the real Host does
-   * not serve — which is exactly how the permission panel shipped broken.
+   * 0.2.1 service surface.
+   *
+   * `settingsScope` was removed in 0.1.7; `configForms`, `settingsSchema`, the
+   * client `sessions` list store and the `workspaces` registry snapshot were all
+   * removed in 0.2.1. None of them is provided here on purpose: a stub that still
+   * offered them would let the plugin keep depending on services the real Host
+   * does not serve — which is exactly how the permission panel shipped broken.
+   *
+   * What 0.2.1 does serve, and what this stub therefore provides, is the Remote
+   * namespace set: `session.list`/`session.projections`, `workspace.follow`,
+   * `commands.execute`, `settings.*` and `permissionPresets.catalog`.
    */
-  const configForms = {
-    configForms: {
-      get: (entryId) => {
-        formReads.push(entryId);
-        return { set: async () => true, getSnapshot: () => ({ status: "ready", value: {}, writable: true, revision: 1 }) };
-      },
-    },
-  };
-  const sessionsService = {
-    list: { subscribe: () => () => {}, getSnapshot: () => ({ ids: [], byId: {}, current: null, phase: "ready" }) },
-    binding: () => undefined,
-    refresh: async () => {},
-    subagentAddress: () => undefined,
-  };
   const slotsService = {
     inject: (name, factory) => { factory(); return () => {}; },
     register: (options, component) => { registrations.set(options.id, component); return () => {}; },
   };
-  /*
-   * The Workspace registry, for the archive set. Present on BOTH carriers: the
-   * panel reads it through a nested `ctx.inject(['workspaces'], …)` precisely so
-   * a carrier without it still loads, and this stub is what lets the suite prove
-   * that path stays optional rather than becoming a hard requirement.
-   */
-  const workspacesService = {
-    list: {
-      subscribe: () => () => {},
-      getSnapshot: () => ({
-        items: [], archivedSessionIds: [], pinnedSessionIds: [],
-        state: "idle", phase: "ready", error: null,
-      }),
-    },
-  };
   const shortcutsService = {
     register: (command) => { commands.set(command.id, command); return () => { commands.delete(command.id); }; },
   };
+  /** Mode writes performed through `remote.settings.update` on the Desktop carrier. */
+  const modeWrites = [];
   const scopeFor = (names) => {
     const scope = { effect: runEffect };
-    if (names.includes("configForms")) Object.assign(scope, configForms);
-    if (names.includes("sessions")) Object.assign(scope, { sessions: sessionsService });
     if (names.includes("shortcuts")) Object.assign(scope, { shortcuts: shortcutsService });
     if (names.includes("slots")) Object.assign(scope, { slots: slotsService });
-    if (names.includes("workspaces")) Object.assign(scope, { workspaces: workspacesService });
     if (names.includes("remote") || names.includes("settingsSchema")) {
-      Object.assign(scope, {
-        remote: {
-          settings: {
-            // Counted: the panel's `load()` calls this, so a non-zero count is
-            // direct evidence that the settings binding actually fired.
-            describe: async () => { settingsReads.push(1); return { ok: true, value: { writable: true, namespaces: [] } }; },
-            mutate: async () => ({ ok: true, value: { ns: "permission", revision: 1, value: {} } }),
+      const remote = {};
+      if (!omit.includes("remote.session")) {
+        remote.session = {
+          list: async () => ({ ok: true, value: { items: [] } }),
+          projections: async () => ({ ok: true, value: { kind: "sequenced", asOfSeq: 0, values: {} } }),
+        };
+      }
+      if (!omit.includes("remote.workspace")) {
+        remote.workspace = {
+          follow: async function* () {
+            yield { type: "baseline", value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] } };
           },
-          permissionPresets: { catalog: async () => ({ ok: true, value: { options: [], defaultOptions: [], defaultPreset: "" } }) },
-        },
-        settingsSchema: { describe: () => ({ namespaces: [] }), rehydrate: (value) => value, nodeAtPath: () => undefined },
-      });
+        };
+      }
+      if (!omit.includes("remote.commands")) {
+        remote.commands = {
+          execute: async () => ({ ok: true, value: { commandId: "c", result: { kind: "success" } } }),
+        };
+      }
+      if (!omit.includes("remote.settings")) {
+        remote.settings = {
+          // Counted: the panel's `load()` calls this, so a non-zero count is
+          // direct evidence that the settings binding actually fired.
+          describe: async () => { settingsReads.push(1); return { ok: true, value: { writable: true, namespaces: [] } }; },
+          mutate: async () => ({ ok: true, value: { ns: "permission", revision: 1, value: {} } }),
+          update: async (ns, patch) => { modeWrites.push({ ns, patch }); return { ok: true, value: { ns, revision: 2, value: patch } }; },
+        };
+      }
+      if (!omit.includes("remote.permissionPresets")) {
+        remote.permissionPresets = { catalog: async () => ({ ok: true, value: { options: [], defaultOptions: [], defaultPreset: "" } }) };
+      }
+      Object.assign(scope, { remote });
     }
     return scope;
   };
@@ -208,7 +204,7 @@ function loadPlugin({ bridge, search, omit = [] }) {
   plugin.apply(ctx);
 
   global.window = previousWindow;
-  const carrier = { bridge, search, windowKeydown, reloads, fetches, formReads, registrations, commands, settingsReads };
+  const carrier = { bridge, search, windowKeydown, reloads, fetches, modeWrites, registrations, commands, settingsReads };
   loaded.push(carrier);
   return carrier;
 }
@@ -356,9 +352,9 @@ const EXPECTED_COMMANDS = [
     }
   }
 
-  // The `dsh-desktop` namespace is Desktop-owned; resolving its form on a browser
+  // The `dsh-desktop` namespace is Desktop-owned; writing its mode on a browser
   // carrier would target a namespace that has no settings row.
-  if (web.formReads.length !== 0) throw new Error("web: resolved the dsh-desktop settings form without the Desktop shell");
+  if (web.modeWrites.length !== 0) throw new Error("web: wrote the dsh-desktop mode without the Desktop shell");
 
   // Refresh still works on the web carrier, via a page reload rather than a
   // Desktop endpoint. The command is unbound by default, so it is invoked the way
@@ -406,8 +402,25 @@ const EXPECTED_COMMANDS = [
   for (const profile of ["desktop:macos", "desktop:windows", "desktop:linux"]) {
     if (restartDefaults[profile] === undefined) throw new Error("desktop: Restart has no default for " + profile);
   }
-  if (desktop.formReads.length !== 1 || desktop.formReads[0] !== "dsh-desktop") {
-    throw new Error("desktop: the dsh-desktop settings form was not resolved exactly once; saw " + JSON.stringify(desktop.formReads));
+  /*
+   * Under the shell, the three mode commands must be HANDLED and must write the
+   * `dsh-desktop` namespace through `remote.settings.update`. 0.2.1 has no
+   * `configForms`, so the write itself — not a form lookup — is the surface.
+   */
+  for (const id of ["hotkeyToolkit.modeCompatibility", "hotkeyToolkit.modeExtended", "hotkeyToolkit.modeAdvanced"]) {
+    const result = desktop.commands.get(id).resolve({ region: "page", modal: null, target: null });
+    if (result.status !== "handled") {
+      throw new Error("desktop: " + id + " resolved to " + result.status + " under the Desktop shell");
+    }
+    result.run();
+  }
+  await flush();
+  const modeWrite = desktop.modeWrites.find((call) => call.ns === "dsh-desktop");
+  if (modeWrite === undefined) {
+    throw new Error("desktop: no dsh-desktop write reached remote.settings.update; saw " + JSON.stringify(desktop.modeWrites));
+  }
+  if (typeof modeWrite.patch.mode !== "string") {
+    throw new Error("desktop: the mode write carries no `mode`; saw " + JSON.stringify(modeWrite.patch));
   }
   // Under the shell, Refresh rides the Desktop action rather than a page reload.
   const desktopRefresh = desktop.commands.get("hotkeyToolkit.refresh").resolve({ region: "page", modal: null, target: null });
@@ -424,36 +437,32 @@ const EXPECTED_COMMANDS = [
   // The bridge and the marker are independent signals; a generation that ships
   // only one of them must still be recognised as the shell.
   const marker = loadPlugin({ bridge: false, search: "?dsh-desktop-mode=extended" });
-  if (marker.formReads.length !== 1) throw new Error("marker: the dsh-desktop settings form was not resolved");
   const markerRestart = marker.commands.get("hotkeyToolkit.restart").resolve({ region: "page", modal: null, target: null });
   if (markerRestart.status !== "handled") {
     throw new Error("marker: Restart refused on a shell detected from the URL marker alone");
   }
 
-  // ---- carrier D: no Workspace registry at all ----
-  // `workspaces` is a SOFT dependency: the archive set only refines the
-  // permissions panel, so a carrier that does not compose it must still get the
-  // whole plugin. This is the assertion that keeps it out of the hard-gate
-  // `inject` array — there, a missing service would leave the plugin PENDING
-  // forever instead of merely hiding one refinement.
-  const noWorkspaces = loadPlugin({ bridge: false, search: "", omit: ["workspaces"] });
+  // ---- carrier D: no archive stream at all ----
+  // The archive set is a SOFT refinement: a carrier whose Remote namespace set
+  // lacks `remote.workspace` must still get the whole plugin, with the panel
+  // failing open to an empty archive set. This is the assertion that keeps the
+  // archive read out of the hard-gate `inject` array.
+  const noWorkspaces = loadPlugin({ bridge: false, search: "", omit: ["remote.workspace"] });
   if (!noWorkspaces.registrations.has("hotkey-toolkit")) {
-    throw new Error("no-workspaces: the settings section was not registered; a missing optional service must not break activation");
+    throw new Error("no-archive: the settings section was not registered; a missing optional surface must not break activation");
   }
   if (!noWorkspaces.registrations.has("workspace-permissions")) {
-    throw new Error("no-workspaces: the permissions panel was not registered; it must survive an absent Workspace registry");
+    throw new Error("no-archive: the permissions panel was not registered; it must survive an absent archive stream");
   }
   if (noWorkspaces.commands.size !== web.commands.size) {
-    throw new Error("no-workspaces: shortcut commands went missing with the Workspace registry absent");
+    throw new Error("no-archive: shortcut commands went missing with the archive stream absent");
   }
 
   // ---- carrier E: no settingsSchema service ----
-  // The panel's settings binding is deliberately injected WITHOUT `settingsSchema`
-  // now that the new-session defaults come from the Host catalog. If those two are
-  // ever re-coupled, a carrier lacking the schema service leaves the binding
-  // unfired and the panel permanently on "loading" — the same silent shape as the
-  // original `settingsScope` bug. The stub withholds the service AND refuses to
-  // call back for it, so re-coupling fails right here.
+  // 0.2.1 does not compose `settingsSchema` at all. The panel's settings binding
+  // is injected WITHOUT it, and must still reach `remote.settings.describe()`.
+  // If those two are ever re-coupled, the panel hangs on "loading" — the same
+  // silent shape as the original `settingsScope` bug.
   const noSchema = loadPlugin({ bridge: false, search: "", omit: ["settingsSchema"] });
   const noSchemaPanel = noSchema.registrations.get("workspace-permissions");
   if (noSchemaPanel === undefined) {

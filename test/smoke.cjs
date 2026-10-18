@@ -99,72 +99,39 @@ const requireStub = (id) => {
 new Function("require", "window", "document", source)(requireStub, global.window, global.document);
 if (captured === null) throw new Error("client.js never called __ModuleLoader__.load");
 
-// ---- fake host services ----
-// The session projection is `{ currentValue }` ONLY. It has no `options` field —
-// the real `PermissionSelection` type is exactly that, and the selectable presets
-// come from the process-level catalog Remote instead. This stub used to invent an
-// `options` array here, which is why the suite passed while the shipped panel
-// disabled every row: the fake host was richer than the real one.
+// ---- fake host services (0.2.1-rc.2 surface only) ----
+//
+// 0.2.1 removed the client `sessions.list` and `workspaces.list` snapshots and
+// the `configForms`/`settingsSchema` services. The panel therefore reads:
+//   - `remote.session.list({})`         → visible rows with projection hints
+//   - `remote.workspace.follow(signal)` → archive set (baseline frame)
+//   - `remote.session.projections(...)` → cold read for rows without hints
+//   - `remote.commands.execute(...)`    → `/permission` dispatch
+// A fixture that still served the removed snapshots would pass while the shipped
+// plugin throws, which is the exact trap this suite exists to avoid.
 const permissionsOf = (currentValue) => ({ currentValue });
-const listSnapshot = {
-  ids: ["s1", "s2", "s3"],
-  byId: {
-    s1: { id: "s1", displayTitle: "Session A", running: true, cwd: "H:/work/a", projectionValues: { permissions: permissionsOf("workspace-write") } },
-    /*
-     * Session B sits at the SAME preset Session A does, so a bulk apply that
-     * ignored the selection would try to change it too and produce a second
-     * dispatch. With Session B at `read-only` instead, an ignored selection would
-     * skip it as a no-op and the defect would hide. The fixture has to make the
-     * wrong behaviour visible, not merely detectable in principle.
-     */
-    s2: { id: "s2", displayTitle: "Session B", running: false, cwd: "H:/work/b", projectionValues: { permissions: permissionsOf("workspace-write") } },
-    /*
-     * Archived (see the workspaces stub below): the panel must NOT list it.
-     * Deliberately WITHOUT a `projectionValues` entry: if it carried one, the
-     * projection-read effect would skip it as "already known" even when the
-     * archive filter was broken, and the assertion that archived sessions are
-     * never read would pass vacuously. A missing projection makes the archive
-     * check the only thing that can suppress the read.
-     */
-    s3: { id: "s3", displayTitle: "Session C", running: false, cwd: "H:/work/c" },
-  },
-  current: "s1",
-  phase: "ready",
-};
-const sessions = {
-  list: { subscribe: () => () => {}, getSnapshot: () => listSnapshot },
-  /*
-   * `binding()` returns undefined, exactly as it does for a session the user has
-   * never opened. This is the fixture that matters: the panel MUST NOT depend on
-   * it, because doing so is what produced "该会话暂时无法下发指令（尚未装载）".
-   * Dispatching by id through `remote.commands` is what makes an unopened session
-   * a valid target, so the stub refuses the binding path outright.
-   */
-  binding: () => undefined,
-  refresh: async () => {},
-  refreshProjections: async (id) => { projectionReads.push(id); },
-  subagentAddress: () => undefined,
-};
-/*
- * The Workspace registry, for the archive set. `s3` is archived and is NOT in
- * the sessions list above, so the archive filter has a visible effect on the
- * rows: the panel must skip it and report the count. The shape mirrors the real
- * `WorkspaceSnapshot` — only `archivedSessionIds` is read here, and it is read
- * off `list.getSnapshot()`.
+
+/**
+ * The visible Session rows.
+ *
+ * `s3` is archived (see the workspace baseline below) and is deliberately
+ * WITHOUT a `permissions` value: if it carried one, the projection-read effect
+ * would skip it as "already known" even when the archive filter was broken, and
+ * the assertion that archived sessions are never read would pass vacuously.
  */
-const workspaces = {
-  list: {
-    subscribe: () => () => {},
-    getSnapshot: () => ({
-      items: [],
-      archivedSessionIds: ["s3"],
-      pinnedSessionIds: [],
-      state: "idle",
-      phase: "ready",
-      error: null,
-    }),
-  },
-};
+const sessionRows = [
+  { agentAvailable: true, sessionId: "s1", updatedAt: 1, running: true, blank: false, cwd: "H:/work/a", projections: { kind: "cached", asOfSeq: 1, values: { title: "Session A", permissions: permissionsOf("workspace-write") } } },
+  /*
+   * Session B sits at the SAME preset Session A does, so a bulk apply that
+   * ignored the selection would try to change it too and produce a second
+   * dispatch. With Session B at `read-only` instead, an ignored selection would
+   * skip it as a no-op and the defect would hide.
+   */
+  { agentAvailable: true, sessionId: "s2", updatedAt: 2, running: false, blank: false, cwd: "H:/work/b", projections: { kind: "cached", asOfSeq: 2, values: { title: "Session B", permissions: permissionsOf("workspace-write") } } },
+  { agentAvailable: true, sessionId: "s3", updatedAt: 3, running: false, blank: false, cwd: "H:/work/c", projections: { kind: "cached", asOfSeq: 3, values: { title: "Session C" } } },
+];
+const sessionListCalls = [];
+const archiveSignals = [];
 const settingsView = {
   writable: true,
   namespaces: [{ ns: "permission", revision: 1, schema: {}, value: { defaultPreset: "workspace-write" } }],
@@ -175,26 +142,47 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
 const fakeScope = {
   effect: runEffect,
   remote: {
-    /*
-     * The slash-command surface the panel dispatches through.
-     *
-     * `execute(sessionId, line, attachments)` takes the id DIRECTLY — the same
-     * surface the official ui-plan chip uses — so an unopened session is a valid
-     * target. Recording `(id, line)` here is what lets the suite assert that the
-     * panel addressed the right session, not merely that some command ran.
-     */
-    commands: {
-      execute: async (id, line) => {
-        commandCalls.push({ id, line });
-        return { ok: true, value: { matched: true } };
+    session: {
+      list: async (request, signal) => {
+        sessionListCalls.push({ request, signal });
+        return { ok: true, value: { items: sessionRows } };
+      },
+      /*
+       * A cold per-Session read. `s3` is archived, so the panel must never ask
+       * for it; the fixture records every request so a regression is visible.
+       */
+      projections: async (request) => {
+        projectionReads.push(request.sessionId);
+        return { ok: true, value: { kind: "sequenced", asOfSeq: 1, values: { title: "Session B", permissions: permissionsOf("read-only") } } };
       },
     },
-    // `remote.settings.describe` is how the panel reads the permission namespace;
-    // `ctx.settingsScope` does not exist in DSH 0.1.7 and must not be provided
-    // here, or the suite would again be testing an API the Host does not serve.
+    /*
+     * The archive set. `WorkspaceBaseline.archivedSessionIds` is the only field
+     * this plugin reads; `follow` is an async stream that opens with a baseline.
+     */
+    workspace: {
+      follow: async function* (signal) {
+        archiveSignals.push(signal);
+        yield { type: "baseline", value: { items: [], archivedSessionIds: ["s3"], pinnedSessionIds: [] } };
+      },
+    },
+    /*
+     * The slash-command surface the panel dispatches through. 0.2.1 types the
+     * first argument as the receiving Agent (`{ id }`); the panel also retries
+     * with the bare id on an older carrier. Recording both shapes is what lets
+     * the suite assert the panel addressed the right session.
+     */
+    commands: {
+      execute: async (target, line) => {
+        commandCalls.push({ target, line });
+        return { ok: true, value: { commandId: "c", result: { kind: "success" } } };
+      },
+    },
+    // `remote.settings.describe` is how the panel reads the permission namespace.
     settings: {
       describe: async () => ({ ok: true, value: settingsView }),
       mutate: async (...args) => { mutateCalls.push(args); return { ok: true, value: settingsView.namespaces[0] }; },
+      update: async () => ({ ok: true, value: settingsView.namespaces[0] }),
     },
     // The process-level preset catalog: the ONLY source of selectable presets.
     permissionPresets: {
@@ -212,17 +200,6 @@ const fakeScope = {
       }),
     },
   },
-  settingsSchema: {
-    describe: () => ({ namespaces: [{ ns: "permission", schema: {} }] }),
-    rehydrate: (value) => value,
-    nodeAtPath: () => ({ type: "union", list: [
-      { type: "const", value: "read-only" },
-      { type: "const", value: "workspace-write" },
-      { type: "const", value: "danger-full-access" },
-    ] }),
-  },
-  sessions,
-  workspaces,
   shortcuts: { register: () => () => {} },
   slots: {
     inject: (name, factory) => { factory(); return () => {}; },
@@ -427,8 +404,8 @@ const openDropdown = (index) => {
    * unopened session), so a regression to that path fails here rather than in the
    * user's browser as "该会话暂时无法下发指令（尚未装载）".
    */
-  if (commandCalls[0].id !== "s1") {
-    throw new Error("case 3/4: the command was not addressed to the clicked session by id; saw id=" + JSON.stringify(commandCalls[0].id));
+  if (commandCalls[0].target === null || typeof commandCalls[0].target !== "object" || commandCalls[0].target.id !== "s1") {
+    throw new Error("case 3/4: the command was not addressed to the clicked session by id; saw target=" + JSON.stringify(commandCalls[0].target));
   }
 
   // ---- case 5: the default-preset write goes through the settings mutate path ----
@@ -536,18 +513,28 @@ const openDropdown = (index) => {
     throw new Error("case 9: Escape did not close the confirmation");
   }
 
-  // ---- case 10: unopened sessions get their projections read ----
+  // ---- case 10: rows without projection hints get their projections read ----
   /*
-   * The list snapshot carries `projectionValues` for s1/s2 in this fixture, so the
+   * The list answer carries `projections.values` for s1/s2 in this fixture, so the
    * panel has nothing to fetch and this assertion would pass vacuously. The real
-   * defect was a session with NO projection: the row had `current === null`, so it
-   * rendered disabled and read as "不可用". Drop one session's projection and assert
-   * the panel asks the Host for it instead of giving up.
+   * defect was a session with NO projection hint: the row had `current === null`,
+   * so it rendered disabled and read as "不可用". Drop one session's hint and
+   * assert the panel asks the Host for it instead of giving up.
    */
-  const withValues = listSnapshot.byId.s2.projectionValues;
-  delete listSnapshot.byId.s2.projectionValues;
+  const withValues = sessionRows[1].projections;
+  delete sessionRows[1].projections;
   projectionReads.length = 0;
   hookSlots.clear();
+  /*
+   * The catalog is adopted from `remote.session.list` when the plugin activates
+   * and re-read when the user asks for it, so dropping the hint alone changes
+   * nothing: exercise the real refresh control, exactly as a user would.
+   */
+  const beforeRefresh = renderOnce(true);
+  const refreshButton = collect(beforeRefresh, (entry) => entry.type === "button" && explain(entry).includes("wpRefresh"))[0];
+  if (refreshButton === undefined) throw new Error("case 10: the panel rendered no refresh control");
+  refreshButton.props.onClick();
+  await flush();
   renderOnce(true);
   await flush();
   if (!projectionReads.includes("s2")) {
@@ -556,7 +543,12 @@ const openDropdown = (index) => {
   if (projectionReads.includes("s3")) {
     throw new Error("case 10: the ARCHIVED session's projection was read; archived sessions are not managed here");
   }
-  listSnapshot.byId.s2.projectionValues = withValues;
+  sessionRows[1].projections = withValues;
+  /* Put the catalog back to the hinted state the later cases expect. */
+  const backFill = renderOnce(true);
+  const refreshAgain = collect(backFill, (entry) => entry.type === "button" && explain(entry).includes("wpRefresh"))[0];
+  if (refreshAgain !== undefined) refreshAgain.props.onClick();
+  await flush();
 
   // ---- case 11: bulk select + one-click apply ----
   hookSlots.clear();
@@ -645,7 +637,7 @@ const openDropdown = (index) => {
    * change — so if the implementation ignored the tick and targeted every row,
    * a second dispatch would appear here and this assertion would fail.
    */
-  const bulkTargets = commandCalls.map((call) => call.id).sort();
+  const bulkTargets = commandCalls.map((call) => (call.target !== null && typeof call.target === "object" ? call.target.id : call.target)).sort();
   if (bulkTargets.length !== 1 || bulkTargets[0] !== "s1") {
     throw new Error("case 11: bulk apply must touch exactly the ticked session (s1); saw " + JSON.stringify(commandCalls));
   }
