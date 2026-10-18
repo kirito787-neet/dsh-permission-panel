@@ -645,6 +645,41 @@ const openDropdown = (index) => {
     throw new Error("case 11: bulk apply sent the wrong command; saw " + JSON.stringify(commandCalls[0].line));
   }
 
+  // ---- case 12: an ABSENT defaultPreset is not a broken deployment ----
+  /*
+   * `defaultPreset` is `z.string().volatile()` with neither `.required()` nor
+   * `.default()`, and a volatile settings form only projects fields that hold a
+   * value — so a user who never wrote a default gets `namespace.value === {}`.
+   * The panel used to call that "permission settings has no defaultPreset value"
+   * and render 默认权限加载失败 over a perfectly healthy deployment.
+   *
+   * The Host still derives an effective default (composition defaults folded
+   * through `presets`) and publishes it as `catalog.defaultPreset`; that is the
+   * documented fallback, and what the official settings row reads with `??`.
+   * Emptying the namespace value is how this suite reproduces the shipped bug.
+   */
+  settingsView.namespaces[0].value = {};
+  renderPanel(DEFAULT_DROPDOWN);
+  await flush();
+  const absentTree = renderOnce(false);
+  const defaultCard = collect(absentTree, (entry) => entry.props?.className === "dshk-card")
+    .find((card) => explain(card).includes("wpDefaultSection"));
+  if (defaultCard === undefined) throw new Error("case 12: the new-session default card disappeared");
+  const defaultHint = collect(defaultCard, (entry) => entry.props?.className === "dshk-hint")[0];
+  if (defaultHint !== undefined && explain(defaultHint).includes("wpLoadFailed")) {
+    throw new Error("case 12: an unset defaultPreset was reported as a load failure: " + explain(defaultHint));
+  }
+  const defaultTrigger = collect(defaultCard, (entry) => entry.props?.className === "dshk-wpSelect")[0];
+  if (defaultTrigger === undefined) throw new Error("case 12: the default preset selector disappeared");
+  if (explain(defaultTrigger).includes("wpUnavailable")) {
+    throw new Error("case 12: the default preset reads as unavailable although the catalog advertises one: " + explain(defaultTrigger));
+  }
+  if (!explain(defaultTrigger).includes("read-only")) {
+    throw new Error("case 12: the default preset did not fall back to catalog.defaultPreset; saw " + explain(defaultTrigger));
+  }
+  // Restore the fixture so the reported summary describes the normal path.
+  settingsView.namespaces[0].value = { defaultPreset: "workspace-write" };
+
   console.log(
     "smoke ok: portals=" + portalCalls.length +
     " commands=" + JSON.stringify(commandCalls) +
