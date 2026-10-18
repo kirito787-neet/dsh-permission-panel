@@ -13,7 +13,7 @@
  *      (these are built dynamically, so a typo would otherwise only surface as a
  *      raw key inside 设置 → 快捷键).
  *
- * The seat's own namespace (`hotkeyToolkit.seat`) used to be checked here as
+ * The seat's own namespace (`permissionPanel.seat`) used to be checked here as
  * well. The searchable model seat moved to `dsh-client-ui-effort-slider` and took
  * its dictionary with it, so that namespace no longer exists in this plugin.
  *

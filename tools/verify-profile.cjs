@@ -60,7 +60,7 @@ if (status !== 0 || dumped.trim() === "") {
 const lines = dumped.split(/\r?\n/u);
 const rows = [];
 for (let i = 0; i < lines.length; i++) {
-  if (!/dsh-hotkey-toolkit/u.test(lines[i])) continue;
+  if (!/dsh-permission-panel/u.test(lines[i])) continue;
   // Capture the row this line belongs to: walk back to the nearest "- id:".
   let id = null;
   for (let back = i; back >= 0 && back > i - 12; back--) {
@@ -71,14 +71,14 @@ for (let i = 0; i < lines.length; i++) {
 }
 
 if (rows.length === 0) {
-  console.error("FAILED: dsh-hotkey-toolkit does not appear in the composed " + profile + " profile");
+  console.error("FAILED: dsh-permission-panel does not appear in the composed " + profile + " profile");
   process.exit(1);
 }
 
 // The plugin must appear as a loader row (id + name), not only as a stray string.
 const rowIds = [...new Set(rows.map((row) => row.id).filter(Boolean))];
-if (!rowIds.includes("dsh-hotkey-toolkit")) {
-  console.error("FAILED: found the name but no loader row with id 'dsh-hotkey-toolkit'; saw " + JSON.stringify(rowIds));
+if (!rowIds.includes("dsh-permission-panel")) {
+  console.error("FAILED: found the name but no loader row with id 'dsh-permission-panel'; saw " + JSON.stringify(rowIds));
   process.exit(1);
 }
 
@@ -104,7 +104,7 @@ if (!pkg.dsh?.client?.inject?.includes("@deepseek-ai/dsh-client-shortcuts")) {
 }
 
 console.log(
-  "profile-verify ok: " + profile + " mounts row id=dsh-hotkey-toolkit"
+  "profile-verify ok: " + profile + " mounts row id=dsh-permission-panel"
   + " client=" + clientPath + " platform=web"
   + " shortcuts-inject=1",
 );

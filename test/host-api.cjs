@@ -420,7 +420,7 @@ settle().then(() => {
       fail(carrier + ": the plugin never injected 'remote'; the permission panel reads everything through it");
     }
     if (!run.registrations.has("workspace-permissions")) fail(carrier + ": the workspace-permissions section was never registered");
-    if (!run.registrations.has("hotkey-toolkit")) fail(carrier + ": the hotkey-toolkit settings section was never registered");
+    if (!run.registrations.has("dsh-permission-panel")) fail(carrier + ": the dsh-permission-panel settings section was never registered");
 
     const reads = run.reads();
     if (reads.sessionListed === 0) {

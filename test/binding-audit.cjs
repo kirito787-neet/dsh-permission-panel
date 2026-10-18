@@ -238,11 +238,11 @@ const PLATFORMS = ["macos", "windows", "linux"];
 
 // ---- the plugin's own declared commands, rebuilt exactly as client.js builds them ----
 // Desktop profiles only, by design; the Web profiles are intentionally unbound.
-const ACTIONS = ["restart", "compatibility", "extended", "advanced"];
+const ACTIONS = ["restart"];
 const own = {};
 for (const action of ACTIONS) {
   const binding = desktopBindings[action];
-  own["hotkeyToolkit." + action] = {
+  own["permissionPanel." + action] = {
     "desktop:macos": binding, "desktop:windows": binding, "desktop:linux": binding,
   };
 }
@@ -340,7 +340,7 @@ mustThrowCode("an unsupported code", { code: "Numpad0", modifiers: ["primary"] }
 
 // 5. The ids must satisfy the official commandPattern.
 const COMMAND_ID_PATTERN = /^[a-z][a-zA-Z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*)+$/u;
-for (const id of [...Object.keys(own), "hotkeyToolkit.refresh"]) {
+for (const id of Object.keys(own)) {
   if (!COMMAND_ID_PATTERN.test(id)) {
     throw new Error("command id " + JSON.stringify(id) + " violates the official commandPattern; "
       + "it would register but corrupt the shortcut document on first edit");
@@ -364,6 +364,6 @@ checks++;
 console.log(
   "binding-audit ok: " + checks + " default/profile combinations validated against "
   + Object.keys(CORE_DEFAULTS).length + " official core defaults; "
-  + Object.keys(own).length + " commands + refresh (unbound by design); "
+  + Object.keys(own).length + " commands (restart only); "
   + "web profiles unbound; negative controls reject Ctrl+R/bare-Escape/Ctrl+C/Numpad0",
 );
