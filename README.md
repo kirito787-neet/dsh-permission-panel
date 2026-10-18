@@ -77,6 +77,15 @@ DSH 的**工作区权限面板**，外加唯一一个官方快捷键：**重启 
 
 顺带修正了默认权限那行的提示：`status === "unavailable"` 时它算出了文案却没渲染（hint 只在 `error` 分支用），现在如实说明「此部署未提供权限设置」。
 
+## 3.0.1 修掉的缺陷：未设置的默认值不等于坏掉的部署
+
+`defaultPreset` 的 schema 是 `z.string().volatile()`——既没有 `.required()` 也没有 `.default()`。而 volatile 设置表单**只投影有值的字段**：用户从没写过默认值时，`settings.describe()` 里那个命名空间是 `{ value: {} }`。
+
+3.0.0 把这种「缺席」当成了「损坏」：`typeof value !== "string"` 直接判失败，于是新会话默认权限那行在**完全健康的部署**上显示「默认权限加载失败：permission settings has no defaultPreset value」。用户看到的正是这句。
+
+修法照官方那行写：`view.value.defaultPreset ?? catalog.defaultPreset`。宿主始终知道**有效默认值**（composition 里的 `presets` 折算出 `defaultPreset` 并随 catalog 发布），它才是这种情形的权威来源。现在只有「命名空间里没写 **且** catalog 也没给出有效值」才算失败，且失败文案会同时点明两处都缺。
+
+## 安装
 
 `dsh plugin add` 只接受一个精确的包目标（本地路径、tarball、npm 包名走同一条命令）；装完会自动把包写进该 profile 的 `dsh.profile.bundles`。
 

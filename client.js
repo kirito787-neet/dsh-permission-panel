@@ -1279,6 +1279,19 @@ window.__ModuleLoader__.load({
 			 * for live switching is not necessarily a legal default.
 			 */
 			defaultCatalog: [],
+			/**
+			 * The catalog's `defaultPreset`: the EFFECTIVE default the Host derives.
+			 *
+			 * `defaultPreset` is `z.string().volatile()` with neither `.required()`
+			 * nor `.default()`, and a volatile settings form only projects fields
+			 * that carry a value. A user who never set the default therefore gets
+			 * `namespace.value === {}` — absent, not broken. The Host still knows
+			 * the effective value (composition defaults folded through
+			 * `presets`), and publishes it here. It is the documented fallback for
+			 * exactly this case; the official settings row reads
+			 * `view.value.defaultPreset ?? catalog.defaultPreset`.
+			 */
+			catalogDefault: null,
 			catalogStatus: "idle",
 			catalogError: null,
 			version: 0,
@@ -1318,6 +1331,9 @@ window.__ModuleLoader__.load({
 					 * The Host's own catalog is what the official row reads.
 					 */
 					this.defaultCatalog = readOptions(value !== null && typeof value === "object" ? value.defaultOptions : void 0);
+					this.catalogDefault = value !== null && typeof value === "object" && typeof value.defaultPreset === "string" && value.defaultPreset !== ""
+						? value.defaultPreset
+						: null;
 					this.catalogStatus = "ready";
 				} catch (cause) {
 					this.catalogStatus = "error";
@@ -1332,6 +1348,12 @@ window.__ModuleLoader__.load({
 				this.status = "loading";
 				this.error = null;
 				this.notify();
+				/*
+				 * Catalog FIRST. The effective default can live only in the catalog
+				 * when the user never wrote `defaultPreset`, and `adopt()` needs it
+				 * as a fallback. It reports its own failures and never throws.
+				 */
+				await this.loadCatalog();
 				try {
 					const response = await panelCtx.remote.settings.describe();
 					if (!response.ok) {
@@ -1342,9 +1364,6 @@ window.__ModuleLoader__.load({
 					this.fail(cause);
 					return;
 				}
-				/* The catalog is independent of the settings read; a failure here is
-				 * reported on its own so one bad transport does not mask the other. */
-				await this.loadCatalog();
 			},
 			/** Fold one `settings.describe` answer into the panel snapshot. */
 			adopt(view) {
@@ -1360,9 +1379,22 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				const raw = namespace.value;
-				const value = raw !== null && typeof raw === "object" ? raw.defaultPreset : void 0;
-				if (typeof value !== "string") {
-					this.fail(new Error("permission settings has no defaultPreset value"));
+				const configured = raw !== null && typeof raw === "object" && typeof raw.defaultPreset === "string" && raw.defaultPreset !== ""
+					? raw.defaultPreset
+					: null;
+				/*
+				 * ABSENT IS NOT BROKEN. `defaultPreset` is `z.string().volatile()`
+				 * with no `.required()` and no `.default()`, and a volatile settings
+				 * form projects only fields that hold a value — so a user who never
+				 * wrote a default sees `value === {}`. The Host still derives an
+				 * effective default and publishes it in `catalog.defaultPreset`.
+				 * Failing here was the bug: it reported "has no defaultPreset
+				 * value" for a perfectly healthy deployment that simply had no
+				 * override on disk.
+				 */
+				const value = configured !== null ? configured : this.catalogDefault;
+				if (value === null) {
+					this.fail(new Error("permission settings has no defaultPreset value and the catalog advertises no effective default"));
 					return;
 				}
 				this.current = value;
