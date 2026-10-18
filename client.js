@@ -873,37 +873,42 @@ window.__ModuleLoader__.load({
 		 * session), so an unopened session is a perfectly valid target and no
 		 * client-side scope, history open, or retention is involved.
 		 *
-		 * 0.2.1 changed the first argument from the bare Session id to the receiving
-		 * Agent (`{ id }`). Both shapes are attempted so the panel keeps working on
-		 * either carrier generation.
+		 * The first argument is the receiving Agent, but on the wire it is the
+		 * BARE Session id: `commands/execute` declares
+		 * `parameters[0] = { name: "agent", wire: "agentId", source: "lookup",
+		 * codec: SessionId }` with `jsonSchema: { type: "string" }`. Passing
+		 * `{ id }` fails boundary validation with
+		 * `wire field "agentId" failed boundary validation`, which is exactly the
+		 * bug this comment exists to prevent from coming back. Every official
+		 * caller writes `execute(sessionId, line, [])`.
+		 *
+		 * There is deliberately NO second "try the other shape" attempt: a
+		 * rejected call throws, and the object shape can never succeed on any
+		 * carrier, so the retry only turned one clear error into the same error.
 		 * @param remoteCommands - the `remote.commands` namespace, or undefined.
 		 * @param id - target session.
 		 * @param line - full command line, leading slash included.
 		 * @returns `{ ok: true }`, or `{ ok: false, message }` describing the refusal.
 		 */
 		async function dispatchCommand(remoteCommands, id, line) {
-			if (remoteCommands !== void 0 && remoteCommands !== null && typeof remoteCommands.execute === "function") {
-				/*
-				 * 0.2.1 types the first argument as the receiving Agent (`{ id }`);
-				 * 0.1.x took the bare Session id. Try the current shape first and
-				 * keep the old call as a fallback so a carrier on either generation
-				 * still dispatches.
-				 */
-				for (const target of [{ id }, id]) {
-					try {
-						const result = await remoteCommands.execute(target, line, [], void 0);
-						if (!result.ok) {
-							return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
-						}
-						if (result.value === void 0) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
-						return { ok: true };
-					} catch (cause) {
-						if (target !== id) continue;
-						return { ok: false, message: describe(cause) };
-					}
-				}
+			if (remoteCommands === void 0 || remoteCommands === null || typeof remoteCommands.execute !== "function") {
+				return { ok: false, message: text("wpSessionUnreachable") };
 			}
-			return { ok: false, message: text("wpSessionUnreachable") };
+			try {
+				const result = await remoteCommands.execute(id, line, [], void 0);
+				if (!result.ok) {
+					return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
+				}
+				/*
+				 * `undefined` means syntax or name did not resolve — the Host never
+				 * entered a handler. Report it instead of claiming success: a preset
+				 * the deployment does not define would otherwise look applied.
+				 */
+				if (result.value === void 0) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
+				return { ok: true };
+			} catch (cause) {
+				return { ok: false, message: describe(cause) };
+			}
 		}
 
 		/**
