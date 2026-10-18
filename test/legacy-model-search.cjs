@@ -106,7 +106,9 @@ const ctx = {
   get: () => undefined,
 };
 
-const STORAGE_KEY = "dsh.hotkeyToolkit.v1";
+const STORAGE_KEY = "dsh.permissionPanel.v1";
+/** The pre-rename key; the store still READS it so an old "off" is not lost. */
+const LEGACY_STORAGE_KEY = "dsh.hotkeyToolkit.v1";
 
 /** Load the plugin fresh against whatever the storage currently holds. */
 const load = () => {
@@ -118,8 +120,8 @@ const load = () => {
 
 /** Drive one per-command switch on the rendered settings page, as a click would. */
 const flipShortcut = (action, next) => {
-  const Section = registrations.get("hotkey-toolkit");
-  if (Section === undefined) throw new Error("the hotkey-toolkit settings section was never registered");
+  const Section = registrations.get("dsh-permission-panel");
+  if (Section === undefined) throw new Error("the dsh-permission-panel settings section was never registered");
   const tree = Section({ t: (key) => key });
   const walk = (node, found = []) => {
     if (node === null || node === undefined || typeof node !== "object") return found;
@@ -139,6 +141,7 @@ const fail = (message) => { console.error("legacy-model-search FAILED:", message
 
 // ---- 1. A legacy OFF survives this plugin's own writes ----
 storage.set(STORAGE_KEY, JSON.stringify({ modelSearch: false, shortcuts: { refresh: true } }));
+// `refresh` is a retired switch key; a payload carrying it must still load.
 load();
 flipShortcut("restart", false);
 {
@@ -157,7 +160,7 @@ flipShortcut("restart", false);
 // ---- 2. A legacy ON survives too (the passthrough is not one-way) ----
 storage.set(STORAGE_KEY, JSON.stringify({ modelSearch: true }));
 load();
-flipShortcut("extended", false);
+flipShortcut("restart", false);
 {
   const persisted = JSON.parse(storage.get(STORAGE_KEY));
   if (persisted.modelSearch !== true) fail("a legacy `modelSearch: true` was dropped (persisted=" + JSON.stringify(persisted) + ")");
@@ -168,7 +171,7 @@ flipShortcut("extended", false);
 // arbitrary data into every future write.
 storage.set(STORAGE_KEY, JSON.stringify({ modelSearch: "yes" }));
 load();
-flipShortcut("refresh", false);
+flipShortcut("restart", false);
 {
   const persisted = JSON.parse(storage.get(STORAGE_KEY));
   if ("modelSearch" in persisted) {

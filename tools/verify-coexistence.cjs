@@ -9,7 +9,7 @@
  * and asserts what actually landed:
  *
  *   1. both packages appear as loader rows in the composed tree;
- *   2. the hotkey toolkit's client half no longer registers anything into the
+ *   2. the permission panel's client half no longer registers anything into the
  *      model cell, while the slider's still does;
  *   3. the hotkey toolkit's own client half is still exactly one registration,
  *      so a stale copy of the old seat is not lurking.
@@ -57,7 +57,7 @@ if (status !== 0 || dumped.trim() === "") {
 const fail = (message) => { console.error("coexistence FAILED:", message); process.exit(1); };
 
 // ---- 1. both packages are mounted as loader rows ----
-for (const [pkgName, rowId] of [["dsh-hotkey-toolkit", "dsh-hotkey-toolkit"], ["dsh-client-ui-effort-slider", "effort-slider"]]) {
+for (const [pkgName, rowId] of [["dsh-permission-panel", "dsh-permission-panel"], ["dsh-client-ui-effort-slider", "effort-slider"]]) {
   if (!dumped.includes(pkgName)) fail(pkgName + " does not appear in the composed " + profile + " profile");
   const lines = dumped.split(/\r?\n/u);
   let found = false;
@@ -85,11 +85,11 @@ const sliderLive = stripComments(sliderClient);
 
 const CELL = "conversation.input.model";
 if (toolkitLive.includes(CELL)) {
-  fail("the hotkey toolkit's client half still registers into '" + CELL + "'. Two owners of one"
+  fail("the permission panel's client half still registers into '" + CELL + "'. Two owners of one"
     + " shadowing cell decide the winner by load order — that ambiguity is exactly what the move removed.");
 }
 if (toolkitLive.includes("modelDirectories")) {
-  fail("the hotkey toolkit's client half still reaches for 'modelDirectories' in live code");
+  fail("the permission panel's client half still reaches for 'modelDirectories' in live code");
 }
 if (!sliderLive.includes(CELL)) {
   fail("the effort-slider does not register into '" + CELL + "'; the composer would fall back to the shipped menu");
@@ -106,6 +106,6 @@ if (registrationCount > 2) {
 }
 
 console.log(
-  "coexistence ok: " + profile + " rows=[dsh-hotkey-toolkit,effort-slider]"
+  "coexistence ok: " + profile + " rows=[dsh-permission-panel,effort-slider]"
   + " model-cell-owner=effort-slider toolkit-cell-refs=0 slider-priority=-1",
 );

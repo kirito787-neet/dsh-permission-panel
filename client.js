@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: "dsh-hotkey-toolkit",
+	id: "dsh-permission-panel",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
@@ -11,9 +11,7 @@ window.__ModuleLoader__.load({
 		const createPortal = reactDomModule.createPortal || (reactDomModule.default && reactDomModule.default.createPortal);
 
 		/** Dictionary namespace owned by this plugin. */
-		const NS = "hotkeyToolkit";
-		/** Namespace of the Desktop-owned settings section this plugin drives. */
-		const DESKTOP_NS = "dsh-desktop";
+		const NS = "permissionPanel";
 		/** Host settings namespace carrying the new-session default permission preset. */
 		const PERMISSION_SETTINGS_NS = "permission";
 		/** Fallback options for the default-preset cell when the schema offers none. */
@@ -27,56 +25,44 @@ window.__ModuleLoader__.load({
 		/** One catalog load at a time; later requests piggyback on it. */
 		let catalogLoading = false;
 		/** localStorage key holding the user's shortcut preferences. */
-		const STORAGE_KEY = "dsh.hotkeyToolkit.v1";
+		const STORAGE_KEY = "dsh.permissionPanel.v1";
+		/**
+		 * The key this plugin used before the rename. Read as a fallback so a user
+		 * who had shortcuts turned off does not silently get them back; never
+		 * written, so the document migrates forward on first change.
+		 */
+		const LEGACY_STORAGE_KEY = "dsh.hotkeyToolkit.v1";
 		/** Electron preload bridge exposing argument-free Desktop actions. */
 		const ACTIONS_BRIDGE = "dshDesktopActions";
-		/** Loopback fallbacks, used when the renderer runs without the preload bridge. */
-		const RELOAD_PATH = "/api/desktop/developer/reload";
+		/** Loopback fallback, used when the renderer runs without the preload bridge. */
 		const RESTART_PATH = "/api/desktop/restart";
 		/** URL marker the Electron main process appends when it owns the window. */
 		const MODE_MARKER = "dsh-desktop-mode";
 
 		const zh = {
-			nav: "快捷键工具包",
-			title: "快捷键工具包",
-			intro: "快捷键已并入官方「设置 → 快捷键」界面，可录制、可恢复默认。本页只保留插件自身的开关。",
-			introWeb: "快捷键已并入官方「设置 → 快捷键」界面。本页只保留插件自身的开关；重启与模式切换仅在 DSH Desktop 中可用。",
+			nav: "权限面板",
+			title: "权限面板",
+			intro: "重启 DSH 已并入官方「设置 → 快捷键」界面，可录制、可恢复默认。本页只保留插件自身的开关与权限面板入口。",
+			introWeb: "重启 DSH 已并入官方「设置 → 快捷键」界面。该命令只在 DSH Desktop 中可用；浏览器载体会把它显示为未绑定。",
 			shortcutSection: "快捷键",
-			shortcutHint: "刷新界面、重启 DSH 与三个模式切换都已在官方快捷键列表中，可在「设置 → 快捷键」里查看与修改。",
-			shortcutRefreshNote: "「刷新界面」默认不绑定：Ctrl+R 已被官方「刷新页面」占用，请在上方界面自行指定组合键。",
+			shortcutHint: "本插件只提供一个命令「重启 DSH」，它已在官方快捷键列表中，可在「设置 → 快捷键」里查看与修改。",
+			shortcutRestartNote: "「重启 DSH」在 DSH Desktop 中默认绑定 Ctrl+Shift+R（macOS 为 ⌘+Shift+R）；浏览器载体中不绑定。",
 			openShortcuts: "打开快捷键设置",
 			switchSection: "快捷键开关",
 			switchSectionHint: "逐个启用或停用本插件提供的快捷键。停用后命令仍保留在官方快捷键列表中，键位与冲突检测都不变，只是按下时不执行（也不会拦截该按键）。",
-			switch_refresh: "刷新界面",
 			switch_restart: "重启 DSH",
-			switch_compatibility: "切换到兼容模式",
-			switch_extended: "切换到扩展模式",
-			switch_advanced: "切换到增强模式",
-			switchHint_refresh: "重新加载渲染进程；插件与设置都会重新读取。",
 			switchHint_restart: "重新启动 DSH Desktop 应用。",
-			switchHint_compatibility: "切到兼容模式并重启 DSH Desktop 生效。",
-			switchHint_extended: "切到扩展模式并重启 DSH Desktop 生效。",
-			switchHint_advanced: "切到增强模式并重启 DSH Desktop 生效。",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
-			cmdRefresh: "刷新界面（快捷键工具包）",
-			cmdRestart: "重启 DSH（快捷键工具包）",
-			cmdModeCompatibility: "切换到兼容模式（快捷键工具包）",
-			cmdModeExtended: "切换到扩展模式（快捷键工具包）",
-			cmdModeAdvanced: "切换到增强模式（快捷键工具包）",
-			cmdAliasRefresh: "刷新界面 重载 重新加载",
+			cmdRestart: "重启 DSH（权限面板）",
 			cmdAliasRestart: "重启 DSH 重新启动",
-			cmdAliasMode: "切换窗口模式 兼容 扩展 增强",
-			reloading: "正在刷新界面…",
 			restarting: "DSH 正在重启…",
-			savedRestarting: "模式已保存，DSH 正在重启…",
-			modeFailed: "模式切换失败：",
 			actionFailed: "操作失败：",
 			noShortcut: "快捷键未绑定或不可用。",
 			subpluginSection: "子插件",
 			subpluginMoved: "模型搜索搜索框已迁移到「Claude 风格推理滑块」插件，请在那边开关（设置 → 插件）。本插件不再占用输入框的模型席位。",
 			desktopOnly: "该操作仅在 DSH Desktop 中可用。",
 			scopeUnavailable: "设置作用域不可用。",
-			webCarrierNote: "当前运行在浏览器（Web）载体中：重启 DSH 与窗口模式切换仅在 DSH Desktop 中可用，因此在官方快捷键列表里默认不绑定。",
+			webCarrierNote: "当前运行在浏览器（Web）载体中：重启 DSH 仅在 DSH Desktop 中可用，因此在官方快捷键列表里默认不绑定。",
 			wpNav: "工作区权限",
 			wpIntro: "查看并调整每个会话的工作区权限（沙盒模式 + 审批策略），并可设置新会话的默认权限；改动即时生效。",
 			wpSessionSection: "会话权限",
@@ -94,6 +80,10 @@ window.__ModuleLoader__.load({
 			wpBulkDone: "已修改 {n} 个会话，{s} 个无需变动。",
 			wpBulkFailed: "{n} 个会话修改失败：{d}",
 			wpUnavailable: "不可用",
+			wpReading: "读取中…",
+			wpNoProjection: "该会话无权限投影",
+			wpReadFailed: "投影读取失败",
+			wpDefaultUnavailable: "此部署未提供权限设置（host 上没有 permission 命名空间），无法修改新会话的默认权限。",
 			wpLoadFailed: "默认权限加载失败：",
 			wpApplied: "已切换到 ",
 			wpDefaultSaved: "默认权限已保存。",
@@ -114,46 +104,29 @@ window.__ModuleLoader__.load({
 			cancel: "取消",
 		};
 		const en = {
-			nav: "Hotkey Toolkit",
-			title: "Hotkey Toolkit",
+			nav: "Permission Panel",
+			title: "Permission Panel",
 			intro: "Shortcuts now live in the official Settings → Keyboard shortcuts dialog, where they can be recorded and restored to defaults. This page keeps only the plugin's own switches.",
-			introWeb: "Shortcuts now live in the official Settings → Keyboard shortcuts dialog. This page keeps only the plugin's own switches; Restart and the mode switches are available in DSH Desktop only.",
+			introWeb: "Restart DSH now lives in the official Settings → Keyboard shortcuts dialog. That command exists only in DSH Desktop; the browser carrier lists it as unbound.",
 			shortcutSection: "Shortcuts",
-			shortcutHint: "Refresh, Restart DSH, and the three mode switches are all in the official shortcut list, editable from Settings → Keyboard shortcuts.",
-			shortcutRefreshNote: "\"Refresh interface\" ships unbound: Ctrl+R already belongs to the official \"Refresh page\", so pick a combination for it in that dialog.",
+			shortcutHint: "This plugin contributes exactly one command, Restart DSH. It lives in the official shortcut list, editable from Settings → Keyboard shortcuts.",
+			shortcutRestartNote: "\"Restart DSH\" ships bound to Ctrl+Shift+R (⌘+Shift+R on macOS) in DSH Desktop; it ships unbound in the browser carrier.",
 			openShortcuts: "Open keyboard shortcuts",
 			switchSection: "Shortcut switches",
 			switchSectionHint: "Enable or disable each shortcut this plugin contributes. A disabled command stays in the official shortcut list with its keys and conflict checks intact — it simply does not run when pressed (and does not swallow the key).",
-			switch_refresh: "Refresh interface",
 			switch_restart: "Restart DSH",
-			switch_compatibility: "Switch to Compatibility mode",
-			switch_extended: "Switch to Extended mode",
-			switch_advanced: "Switch to Advanced mode",
-			switchHint_refresh: "Reloads the renderer; plugins and settings are read again.",
 			switchHint_restart: "Relaunches the DSH Desktop application.",
-			switchHint_compatibility: "Switches to Compatibility mode and restarts DSH Desktop to apply it.",
-			switchHint_extended: "Switches to Extended mode and restarts DSH Desktop to apply it.",
-			switchHint_advanced: "Switches to Advanced mode and restarts DSH Desktop to apply it.",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
-			cmdRefresh: "Refresh interface (Hotkey Toolkit)",
-			cmdRestart: "Restart DSH (Hotkey Toolkit)",
-			cmdModeCompatibility: "Switch to Compatibility mode (Hotkey Toolkit)",
-			cmdModeExtended: "Switch to Extended mode (Hotkey Toolkit)",
-			cmdModeAdvanced: "Switch to Advanced mode (Hotkey Toolkit)",
-			cmdAliasRefresh: "refresh interface reload",
+			cmdRestart: "Restart DSH (Permission Panel)",
 			cmdAliasRestart: "restart DSH relaunch",
-			cmdAliasMode: "switch window mode compatibility extended advanced",
-			reloading: "Refreshing the interface…",
 			restarting: "DSH is restarting…",
-			savedRestarting: "Mode saved — DSH is restarting…",
-			modeFailed: "Mode switch failed: ",
 			actionFailed: "Operation failed: ",
 			noShortcut: "The shortcut is unbound or unavailable.",
 			subpluginSection: "Sub-plugins",
 			subpluginMoved: "The model-search box moved to the \"Claude-style reasoning slider\" plugin — toggle it there (Settings → Plugins). This plugin no longer takes over the composer's model cell.",
 			desktopOnly: "This action is only available in DSH Desktop.",
 			scopeUnavailable: "Settings scope unavailable.",
-			webCarrierNote: "Running on the browser (Web) carrier: Restart DSH and the window-mode switches exist only in DSH Desktop, so they ship unbound in the official shortcut list.",
+			webCarrierNote: "Running on the browser (Web) carrier: Restart DSH exists only in DSH Desktop, so it ships unbound in the official shortcut list.",
 			wpNav: "Workspace Permissions",
 			wpIntro: "View and adjust each session's workspace permissions (sandbox mode + approval policy), plus the default for new sessions. Changes apply immediately.",
 			wpSessionSection: "Session permissions",
@@ -171,6 +144,10 @@ window.__ModuleLoader__.load({
 			wpBulkDone: "Changed {n} session(s); {s} needed no change.",
 			wpBulkFailed: "{n} session(s) failed: {d}",
 			wpUnavailable: "Unavailable",
+			wpReading: "Reading…",
+			wpNoProjection: "This session has no permission projection",
+			wpReadFailed: "Projection read failed",
+			wpDefaultUnavailable: "This deployment exposes no permission settings (no `permission` namespace on the host), so the default for new sessions cannot be changed.",
 			wpLoadFailed: "Failed to load the default permission: ",
 			wpApplied: "Switched to ",
 			wpDefaultSaved: "Default permission saved.",
@@ -252,7 +229,7 @@ window.__ModuleLoader__.load({
 		".dshk-wpItemDesc{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:11px;line-height:15px;margin-top:1px}",
 		".dshk-wpState{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:12px}",
 		].join("\n");
-		const STYLE_ID = "dsh-hotkey-toolkit-styles";
+		const STYLE_ID = "dsh-permission-panel-styles";
 
 		/** Install the plugin stylesheet once; returns a disposer. */
 		function installStyles() {
@@ -279,8 +256,6 @@ window.__ModuleLoader__.load({
 				node.remove();
 			}, 2600);
 		}
-
-		const MODE_IDS = ["compatibility", "extended", "advanced"];
 
 		/**
 		 * Shipped defaults for the preferences this plugin owns itself.
@@ -311,18 +286,20 @@ window.__ModuleLoader__.load({
 			 * A legacy payload may still carry `modelSearch`. normalizeConfig simply
 			 * ignores it, so a profile written before the move upgrades cleanly and the
 			 * slider plugin can read that value once to inherit the user's old choice.
+			 *
+			 * `refresh` and the three mode arms are intentionally GONE. 2.1 keeps one
+			 * contributed command — Restart DSH — because Refresh duplicated the
+			 * official page refresh and the mode switches belong to the Desktop shell's
+			 * own settings, not to a keyboard shortcut. Stored payloads that still carry
+			 * the retired keys are tolerated: normalizeConfig only reads the live keys.
 			 */
 			shortcuts: {
-				refresh: true,
 				restart: true,
-				compatibility: true,
-				extended: true,
-				advanced: true,
 			},
 		};
 
 		/** Every per-command switch this plugin exposes, in display order. */
-		const SHORTCUT_SWITCHES = ["refresh", "restart", "compatibility", "extended", "advanced"];
+		const SHORTCUT_SWITCHES = ["restart"];
 
 		/**
 		 * Merge a stored payload over the defaults.
@@ -354,7 +331,7 @@ window.__ModuleLoader__.load({
 		 *
 		 * Absent or non-boolean reads as ENABLED: a missing key must never silently
 		 * disable a shortcut the user never touched.
-		 * @param action - switch key (`refresh`, `restart`, or a mode id).
+		 * @param action - switch key (currently only `restart`).
 		 * @returns whether the command may run.
 		 */
 		function shortcutEnabled(action) {
@@ -376,8 +353,15 @@ window.__ModuleLoader__.load({
 				for (const listener of listeners) listener();
 			};
 			try {
+				/*
+				 * Read the CURRENT key first, then the pre-rename one. A user who had
+				 * switched a shortcut off before the rename must not silently get it back
+				 * just because the document key changed.
+				 */
 				const stored = window.localStorage.getItem(STORAGE_KEY);
+				const legacy = stored === null ? window.localStorage.getItem(LEGACY_STORAGE_KEY) : null;
 				if (stored !== null) snapshot = normalizeConfig(JSON.parse(stored));
+				else if (legacy !== null) snapshot = normalizeConfig(JSON.parse(legacy));
 			} catch {}
 			return {
 				getSnapshot: () => snapshot,
@@ -414,18 +398,17 @@ window.__ModuleLoader__.load({
 		 * settings UI goes permanently read-only). These ids are asserted against the
 		 * pattern at load time below, so a typo fails loudly and locally instead.
 		 */
-		const COMMAND_REFRESH = "hotkeyToolkit.refresh";
-		const COMMAND_RESTART = "hotkeyToolkit.restart";
-		const COMMAND_MODE = {
-			compatibility: "hotkeyToolkit.modeCompatibility",
-			extended: "hotkeyToolkit.modeExtended",
-			advanced: "hotkeyToolkit.modeAdvanced",
-		};
+		const COMMAND_RESTART = "permissionPanel.restart";
 		/** The official command-id grammar, mirrored so we can self-validate. */
 		const COMMAND_ID_PATTERN = /^[a-z][a-zA-Z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*)+$/u;
 
 		/**
 		 * Every command id this plugin contributes, as one list.
+		 *
+		 * Exactly ONE command: Restart DSH. Refresh duplicated the official page
+		 * refresh, and the window-mode switches wrote a Desktop-owned namespace the
+		 * shell's own settings page already owns — neither belongs behind a keyboard
+		 * shortcut, so both were removed.
 		 *
 		 * Checked against `COMMAND_ID_PATTERN` at load time. This is not defensive
 		 * padding: the renderer's registry accepts a malformed id silently, and the
@@ -435,10 +418,10 @@ window.__ModuleLoader__.load({
 		 * unreadable. Failing loudly here costs one console error; failing there costs
 		 * the user every shortcut they ever customized.
 		 */
-		const COMMAND_IDS = [COMMAND_REFRESH, COMMAND_RESTART].concat(MODE_IDS.map((id) => COMMAND_MODE[id]));
+		const COMMAND_IDS = [COMMAND_RESTART];
 		for (const id of COMMAND_IDS) {
 			if (!COMMAND_ID_PATTERN.test(id)) {
-				throw new Error("hotkey-toolkit: command id " + JSON.stringify(id) + " violates the official shortcut grammar");
+				throw new Error("dsh-permission-panel: command id " + JSON.stringify(id) + " violates the official shortcut grammar");
 			}
 		}
 
@@ -452,32 +435,21 @@ window.__ModuleLoader__.load({
 		 * `ctx.effect` and fails plugin activation outright, so the defaults matter
 		 * more than they look.
 		 *
-		 * Three constraints drive the shape below, each verified against the official
+		 * Two constraints drive the shape below, each verified against the official
 		 * validators by `test/binding-audit.cjs`:
 		 *
-		 *  1. **Refresh ships NO default.** The official `page.refresh`
-		 *     (`ui-sidebar-right`) already owns `Ctrl+R`, and its Web twin owns
-		 *     `Ctrl+Alt+R`. Declaring either here would throw
-		 *     `Conflicting shortcut defaults`. The row still appears in
-		 *     设置 → 快捷键 and the user can bind it; that is strictly better than
-		 *     fighting the official command for a key it already owns.
-		 *  2. **Restart and the mode switches declare Desktop profiles only.** They
-		 *     are Desktop-only by nature — a browser carrier has no application to
-		 *     relaunch and no window mode to switch — so a Web default would advertise
-		 *     a binding that can never fire. It also sidesteps a genuine minefield:
-		 *     on Web, `Ctrl+Shift+R` is `session.rename`, `Ctrl+Alt+R` is
-		 *     `page.refresh`, and `web:linux` admits ONLY `Mod+/`,
-		 *     `Mod+Shift+,`, `Mod+Shift+.` — every other combination is rejected by
-		 *     `isWebBindingAllowed`. Omitting a profile is legal and means "unbound".
-		 *  3. The Desktop defaults stay on the combinations this plugin already
-		 *     shipped (`Ctrl+Shift+R`, `Ctrl+Alt+1/2/3`), which are free on all three
-		 *     Desktop platforms.
+		 *  1. **Restart declares Desktop profiles only.** It is Desktop-only by
+		 *     nature — a browser carrier has no application to relaunch — so a Web
+		 *     default would advertise a binding that can never fire. It also sidesteps
+		 *     a genuine minefield: on Web `Ctrl+Shift+R` is `session.rename`, and
+		 *     `web:linux` admits ONLY `Mod+/`, `Mod+Shift+,`, `Mod+Shift+.` — every
+		 *     other combination is rejected by `isWebBindingAllowed`. Omitting a
+		 *     profile is legal and means "unbound".
+		 *  2. The Desktop default stays on `Ctrl+Shift+R`, which is free on all three
+		 *     Desktop platforms and collides with no official core default.
 		 */
 		const DESKTOP_BINDINGS = {
 			restart: { code: "KeyR", modifiers: ["primary", "shift"] },
-			compatibility: { code: "Digit1", modifiers: ["primary", "alt"] },
-			extended: { code: "Digit2", modifiers: ["primary", "alt"] },
-			advanced: { code: "Digit3", modifiers: ["primary", "alt"] },
 		};
 
 		/**
@@ -533,8 +505,7 @@ window.__ModuleLoader__.load({
 				await bridge.invoke(action);
 				return;
 			}
-			const path = action === "reload" ? RELOAD_PATH : RESTART_PATH;
-			const response = await fetch(path, {
+			const response = await fetch(RESTART_PATH, {
 				method: "POST",
 				credentials: "same-origin",
 				redirect: "error",
@@ -543,17 +514,6 @@ window.__ModuleLoader__.load({
 				body: "{}",
 			});
 			if (!response.ok) throw new Error("HTTP " + String(response.status));
-		}
-
-		/** Read the mode this renderer booted with, from the Electron-owned URL marker. */
-		function currentMode() {
-			if (typeof window === "undefined") return null;
-			try {
-				const value = new URLSearchParams(window.location.search).get(MODE_MARKER);
-				return MODE_IDS.includes(value) ? value : null;
-			} catch {
-				return null;
-			}
 		}
 
 		/** Late-bound translator for imperative (non-React) notices. */
@@ -581,28 +541,10 @@ window.__ModuleLoader__.load({
 		 */
 		function reportPanelFailure(where, cause) {
 			const message = describe(cause);
-			console.error("hotkey-toolkit: " + where + " failed:", cause);
+			console.error("dsh-permission-panel: " + where + " failed:", cause);
 			if (typeof window !== "undefined") {
-				window.__dshHotkeyPanel = { where, message, at: Date.now() };
+				window.__dshPermissionPanel = { where, message, at: Date.now() };
 			}
-		}
-
-		/**
-		 * Refresh the interface.
-		 *
-		 * Under the Desktop shell this is the Desktop-owned reload action, which
-		 * re-reads plugins and settings. On a plain browser carrier there is no such
-		 * endpoint, so fall back to reloading the page itself: same observable
-		 * effect (a fresh renderer boot) through the only mechanism the carrier has.
-		 * `location.reload()` never returns, so nothing after it is reachable.
-		 */
-		async function refreshInterface() {
-			notify(text("reloading"));
-			if (!hasDesktopHost()) {
-				if (typeof window !== "undefined") window.location.reload();
-				return;
-			}
-			await desktopAction("reload");
 		}
 
 		/**
@@ -617,44 +559,6 @@ window.__ModuleLoader__.load({
 			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
 			notify(text("restarting"));
 			await desktopAction("restart");
-		}
-
-		/**
-		 * Switch the window mode.
-		 *
-		 * Writes ride the same Host settings the Desktop settings page uses, in the
-		 * order that page established: a non-compatibility mode withdraws browser and
-		 * LAN access BEFORE the mode lands, so the app never boots a mode the
-		 * marker-free carrier cannot render. The Desktop Host watches this namespace
-		 * and relaunches itself when mode/port/material move, so no explicit restart
-		 * call is needed here: writing the mode IS the restart trigger.
-		 *
-		 * NOTE ON THE API. DSH 0.1.7 replaced `ctx.settingsScope` with
-		 * `ctx.configForms`, and 0.2.1 then removed `configForms` as well: the
-		 * supported transport is the generated `remote.settings` namespace
-		 * (`update(ns, patch, expectedRevision)`). A silently missing form is why
-		 * mode switching looked "broken rather than absent"; the Remote call is the
-		 * one surface that is still composed here.
-		 *
-		 * A `false` return means the Host refused the write; a silently-refused
-		 * write would otherwise report "mode saved" while nothing changed.
-		 * @param target - captured `remote.settings` namespace, or null when unavailable.
-		 * @param mode - target mode.
-		 */
-		async function switchMode(target, mode) {
-			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
-			if (target === null || target === void 0 || typeof target.update !== "function") throw new Error(text("scopeUnavailable"));
-			const write = async (patch) => {
-				const response = await target.update(DESKTOP_NS, patch, void 0);
-				if (response === null || typeof response !== "object" || response.ok !== true) {
-					throw new Error(text("scopeUnavailable"));
-				}
-			};
-			if (mode !== "compatibility") {
-				await write({ networkExposure: "loopback", openBrowser: false });
-			}
-			await write({ mode });
-			notify(text("savedRestarting"));
 		}
 
 		/** Preset machine value that must pass an explicit risk gate before switching. */
@@ -737,22 +641,41 @@ window.__ModuleLoader__.load({
 			return fallback;
 		}
 
-		/** Fold one `remote.session.list` answer into the catalog. */
+		/**
+		 * Fold one `remote.session.list` answer into the catalog.
+		 *
+		 * Rows this catalog already knows keep what they learned: a list answer only
+		 * carries projection HINTS, so a session that was cold when the hint was taken
+		 * comes back with no `permissions` key — and re-adopting would throw away the
+		 * preset a previous cold read had already resolved. Pressing "refresh" must not
+		 * make a working row go back to "unavailable".
+		 */
 		function adoptSessionItems(items) {
 			const order = [];
 			const byId = Object.create(null);
+			const previous = sessionCatalog.byId;
 			for (const item of items) {
 				if (item === null || typeof item !== "object" || typeof item.sessionId !== "string") continue;
 				const hints = item.projections;
 				const values = hints !== null && hints !== void 0 && hints.values !== void 0 ? hints.values : void 0;
+				const known = previous[item.sessionId];
+				const preset = currentPresetOf(values);
 				order.push(item.sessionId);
 				byId[item.sessionId] = {
 					id: item.sessionId,
 					parentId: item.parentSessionId,
-					title: titleOf(values, item.sessionId),
+					title: titleOf(values, known !== void 0 ? known.title : item.sessionId),
 					cwd: item.cwd,
 					running: item.running === true,
-					preset: currentPresetOf(values),
+					/*
+					 * A hint-less row keeps the preset a previous read resolved, so pressing
+					 * "refresh" never makes a working row fall back to "unavailable" — but its
+					 * read state goes back to `idle`, which is what queues a fresh cold read.
+					 * Keeping the value AND keeping it fresh are both required: dropping it
+					 * flickers the cell, freezing `ready` makes the refresh button a no-op.
+					 */
+					preset: preset === null && known !== void 0 ? known.preset : preset,
+					read: preset === null ? "idle" : "ready",
 				};
 			}
 			sessionCatalog.order = order;
@@ -788,7 +711,14 @@ window.__ModuleLoader__.load({
 				const value = response !== null && typeof response === "object" && response.ok === true ? response.value : null;
 				if (value === null) throw new Error(describe(response !== null && typeof response === "object" ? response.error : response));
 				adoptSessionItems(Array.isArray(value.items) ? value.items : []);
-				await followArchiveSet();
+				/*
+				 * NOT awaited. `followArchiveSet` consumes a stream that stays open for
+				 * the life of the page, so awaiting it never resolves — the `finally`
+				 * below would never run, `catalogLoading` would stay true forever, and
+				 * every later refresh would be short-circuited by the guard above.
+				 * That is exactly the "refresh button does nothing" bug.
+				 */
+				followArchiveSet().catch(() => {});
 			} catch (cause) {
 				sessionCatalog.status = "error";
 				sessionCatalog.error = describe(cause);
@@ -858,6 +788,13 @@ window.__ModuleLoader__.load({
 						cwd: row.cwd,
 						running: row.running,
 						projectionValues: row.preset === null ? void 0 : { permissions: { currentValue: row.preset } },
+						/*
+						 * The catalog row's read state travels with the snapshot so the
+						 * panel can tell "not read yet" apart from "read and empty" and
+						 * from "read failed" — three states that would otherwise all
+						 * render the same "unavailable".
+						 */
+						projectionRead: row.read,
 					};
 				}
 				return { ids: sessionCatalog.order, current: null, byId };
@@ -881,28 +818,51 @@ window.__ModuleLoader__.load({
 		 * starts the session's history, so doing it for every row would open every
 		 * conversation in the sidebar.
 		 *
-		 * Failures are swallowed on purpose: a session whose projection cannot be read
-		 * keeps its row, disabled, and the panel's own refresh can retry. Throwing here
-		 * would take out the whole list because one session misbehaved.
+		 * The read is recorded as a per-row state (`idle` → `loading` → `ready` |
+		 * `empty` | `error`) for two reasons. It stops the panel from firing the same
+		 * request on every render, and it lets a row say WHY it has no value instead of
+		 * rendering the same "unavailable" for "not read yet", "the Host has no
+		 * permission service", and "the read failed".
 		 * @param id - session to read projections for.
 		 */
 		function ensureProjections(id) {
 			const namespaces = remoteRef;
 			if (namespaces === null || namespaces.session === void 0 || typeof namespaces.session.projections !== "function") return;
 			const entry = sessionCatalog.byId[id];
-			/* A row that already knows its preset needs no read (and this runs per render). */
-			if (entry === void 0 || entry.preset !== null) return;
+			/*
+			 * Only a row whose state is `idle` is read. `loading` is in flight,
+			 * `ready` came from a hint the Host itself pushed, and `empty`/`error` were
+			 * already answered — retrying those on every render would hammer the Host for
+			 * a session that simply has no permission projection to offer. A list answer
+			 * that comes back without a hint resets the row to `idle` (see
+			 * adoptSessionItems), which is what makes the refresh button able to retry.
+			 */
+			if (entry === void 0 || entry.read !== "idle") return;
+			entry.read = "loading";
 			Promise.resolve(namespaces.session.projections({ sessionId: id }, void 0)).then((response) => {
 				const value = response !== null && typeof response === "object" && response.ok === true ? response.value : null;
-				if (value === null || typeof value !== "object") return;
+				if (value === null || typeof value !== "object") {
+					/* `null` means the Host has no such Session (it vanished under us). */
+					entry.read = "empty";
+					sessionCatalog.notify();
+					return;
+				}
 				const values = value.values !== void 0 ? value.values : void 0;
 				const preset = currentPresetOf(values);
 				const title = titleOf(values, entry.title);
-				if (preset === entry.preset && title === entry.title) return;
+				/*
+				 * The read is authoritative: it answered from the Session's own log, so it
+				 * overrides the value a previous read left behind. It is the only way a
+				 * permission change made elsewhere ever reaches this row.
+				 */
 				entry.preset = preset;
 				entry.title = title;
+				entry.read = preset === null ? "empty" : "ready";
 				sessionCatalog.notify();
-			}).catch(() => {});
+			}).catch(() => {
+				entry.read = "error";
+				sessionCatalog.notify();
+			});
 		}
 
 		/**
@@ -996,7 +956,7 @@ window.__ModuleLoader__.load({
 			 * restriction instead.
 			 */
 			const switchRows = SHORTCUT_SWITCHES.map((action) => {
-				const desktopOnly = action !== "refresh";
+				const desktopOnly = true;
 				return React.createElement("div", { className: "dshk-row", key: action }, [
 					React.createElement("div", { className: "dshk-rowCopy", key: "c" }, [
 						React.createElement("div", { className: "dshk-rowLabel", key: "l" }, t("switch_" + action)),
@@ -1023,7 +983,7 @@ window.__ModuleLoader__.load({
 				React.createElement("div", { className: "dshk-card", key: "shortcuts" }, [
 					React.createElement("h4", { key: "h" }, t("shortcutSection")),
 					React.createElement("div", { className: "dshk-hint", key: "hh" }, t("shortcutHint")),
-					React.createElement("div", { className: "dshk-hint", key: "rn" }, t("shortcutRefreshNote")),
+					React.createElement("div", { className: "dshk-hint", key: "rn" }, t("shortcutRestartNote")),
 					desktop ? null : React.createElement("div", { className: "dshk-hint dshk-platformNote", key: "pn" }, t("webCarrierNote")),
 				]),
 				React.createElement("div", { className: "dshk-card", key: "switches" }, [
@@ -1078,30 +1038,32 @@ window.__ModuleLoader__.load({
 		 * 0.2.1 gating, per namespace:
 		 *   - `remote.session` — the permissions panel's Session catalog
 		 *     (`list`/`projections`) and its per-Session live view.
+		 *   - `remote.workspace` — the archive stream (`follow`) that filters rows.
 		 *   - `remote.commands` — the `/permission` dispatch transport.
 		 *   - `remote.settings` — the new-session default preset read/write.
 		 *   - `remote.permissionPresets` — the selectable preset catalog.
 		 *
-		 * `remote.session` moved back INTO this array in 0.2.1: the Client sessions
-		 * service lost its list snapshot, so the panel now reads the Remote instead,
-		 * and a hard gate is what makes a missing namespace visible rather than an
-		 * empty panel. `workspaces` and `shortcuts` remain lazily injected via
-		 * `ctx.inject([...], ...)` inside `apply`: a carrier without them still gets
-		 * the settings page and the permissions panel instead of the whole plugin
-		 * waiting forever for a service that never arrives.
+		 * `remote.session` and `remote.workspace` moved back INTO this array in
+		 * 0.2.1: the Client sessions service lost its list snapshot and the
+		 * Workspace registry lost its snapshot too, so the panel now reads the
+		 * Remotes instead, and a hard gate is what makes a missing namespace
+		 * visible rather than an empty panel. `workspaces` and `shortcuts` (the
+		 * CLIENT services, not the Remote namespaces) remain lazily injected via
+		 * `ctx.inject([...], ...)` inside `apply`: a carrier without them still
+		 * gets the settings page and the permissions panel instead of the whole
+		 * plugin waiting forever for a service that never arrives.
 		 *
 		 * The difference between the two gates is not cosmetic. A name in THIS array
 		 * is a hard requirement: cordis leaves the plugin PENDING forever when it is
 		 * missing. A nested `ctx.inject` is a soft one: the callback simply never
-		 * runs, and the feature that depends on it degrades. The archive set only
-		 * REFINES the permissions panel, and `useArchivedIds()` already fails open to
-		 * an empty set — so it must not be able to take the whole plugin down with it.
+		 * runs, and the feature that depends on it degrades.
 		 */
 		const inject = [
 			"locale",
 			"remote",
 			"remote.commands",
 			"remote.session",
+			"remote.workspace",
 			"remote.settings",
 			"remote.permissionPresets",
 			"slots",
@@ -1114,18 +1076,18 @@ window.__ModuleLoader__.load({
 		 * @param ctx - client root context.
 		 */
 		function apply(ctx) {
-			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "hotkey-toolkit: dictionaries");
-			ctx.effect(() => installStyles(), "hotkey-toolkit: styles");
+			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-permission-panel: dictionaries");
+			ctx.effect(() => installStyles(), "dsh-permission-panel: styles");
 			translate = ctx.locale.bind(NS);
 
 			/*
-			 * The Desktop window-mode form is NO LONGER resolved here.
+			 * This plugin contributes NO settings form of its own any more.
 			 *
-			 * DSH 0.1.7 removed `ctx.settingsScope`; 0.2.1 removed the `configForms`
-			 * replacement as well, so `ctx.inject(['configForms'], …)` never fires and
-			 * a form object is not obtainable. Mode switching therefore rides
-			 * `remote.settings.update(DESKTOP_NS, patch)` (see switchMode), which is
-			 * the surface 0.2.1 actually composes.
+			 * DSH 0.1.7 removed `ctx.settingsScope` and 0.2.1 removed the `configForms`
+			 * replacement as well, so a plugin cannot publish a rendered form. The only
+			 * host-owned surface left is the `permission` settings namespace, and the
+			 * panel drives it through `remote.settings.describe` / `mutate` — see
+			 * permissionPanel below.
 			 */
 
 			/*
@@ -1145,15 +1107,15 @@ window.__ModuleLoader__.load({
 					archiveAbort.abort();
 					archiveAbort = null;
 				}
-			}, "hotkey-toolkit: session catalog");
+			}, "dsh-permission-panel: session catalog");
 
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
-				id: "hotkey-toolkit",
+				id: "dsh-permission-panel",
 				order: 60,
 				label: () => translate("nav"),
 				locale: NS,
-			}, SettingsSection)), "hotkey-toolkit: settings page");
+			}, SettingsSection)), "dsh-permission-panel: settings page");
 
 			/*
 			 * Keyboard commands — contributed to the OFFICIAL shortcut service.
@@ -1221,35 +1183,19 @@ window.__ModuleLoader__.load({
 							 * The settings page explains where shortcuts live, so the user
 							 * still has a path to the official dialog.
 							 */
-							console.error("hotkey-toolkit: could not register shortcut " + id, cause);
+							console.error("dsh-permission-panel: could not register shortcut " + id, cause);
 							notify(text("actionFailed") + describe(cause));
 							return () => {};
 						}
-					}, "hotkey-toolkit: command " + id);
+					}, "dsh-permission-panel: command " + id);
 				};
 
 				/*
-				 * Refresh interface — NO default binding, by design.
+				 * Restart DSH — the ONLY command this plugin contributes.
 				 *
-				 * `Ctrl+R` is already the official `page.refresh` (ui-sidebar-right), and
-				 * its Web twin owns `Ctrl+Alt+R`. Declaring either here would throw
-				 * `Conflicting shortcut defaults` and, worse, would mean two commands
-				 * fighting over one key. The row still appears in the official dialog and
-				 * the user binds it there; `test/binding-audit.cjs` pins this decision.
-				 */
-				contribute(COMMAND_REFRESH, "refresh", {
-					labelKey: "cmdRefresh",
-					aliases: [translate("cmdAliasRefresh"), "refresh", "reload"],
-					defaults: {},
-					regions: ["page", "editable", "terminal"],
-					modals: ["settings", "shortcuts"],
-					resolve: () => ({ status: "handled", run: () => {
-						refreshInterface().catch((cause) => notify(text("actionFailed") + describe(cause)));
-					} }),
-				});
-
-				/*
-				 * Restart DSH — Desktop-only.
+				 * 2.1 removed Refresh and the three window-mode switches: Refresh
+				 * duplicated the official `page.refresh`, and the mode switches write a
+				 * Desktop-owned settings namespace the shell's own page already owns.
 				 *
 				 * The defaults are declared for Desktop profiles only. A Web default
 				 * would advertise a binding that can never fire (there is no application
@@ -1276,33 +1222,6 @@ window.__ModuleLoader__.load({
 						} };
 					},
 				});
-
-				/* The three window-mode switches, Desktop-only for the same reasons. */
-				for (const mode of MODE_IDS) {
-					contribute(COMMAND_MODE[mode], mode, {
-						labelKey: "cmdMode" + mode.charAt(0).toUpperCase() + mode.slice(1),
-						aliases: [translate("cmdAliasMode"), mode],
-						defaults: desktopBindingsFor(mode),
-						regions: ["page", "editable", "terminal"],
-						modals: ["settings", "shortcuts"],
-						resolve: () => {
-							if (!hasDesktopHost()) return { status: "blocked", reason: text("desktopOnly") };
-							/* Already in this mode: nothing to do, but do not consume the key. */
-							if (currentMode() === mode) return { status: "pass" };
-							/*
-							 * The transport is captured from the Remote namespace and may be
-							 * absent when the Desktop settings surface is unavailable; report
-							 * rather than throw.
-							 */
-							const scope = permissionPanel.settingsCtx;
-							const target = scope === null ? null : scope.remote.settings;
-							if (target === null || target === void 0) return { status: "blocked", reason: text("scopeUnavailable") };
-							return { status: "handled", run: () => {
-								switchMode(target, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
-							} };
-						},
-					});
-				}
 			});
 
 			/*
@@ -1570,7 +1489,7 @@ window.__ModuleLoader__.load({
 
 		/** One permission row: optional selection box, session title, tags, preset selector. */
 		function PermissionRow(props) {
-			const { t, title, subtitle, tags, value, options, disabled, onSwitch, selectable, selected, onToggle } = props;
+			const { t, title, subtitle, tags, value, options, disabled, onSwitch, selectable, selected, onToggle, placeholder } = props;
 			return React.createElement("div", { className: "dshk-wpRow" + (selected === true ? " dshk-wpRowPicked" : ""), key: title }, [
 				/*
 				 * The checkbox is rendered ONLY for a row that can actually be changed.
@@ -1598,6 +1517,7 @@ window.__ModuleLoader__.load({
 					options: options.filter((option) => option.custom !== true),
 					disabled,
 					onSwitch,
+					placeholder,
 					t,
 				}),
 				]);
@@ -1627,7 +1547,7 @@ window.__ModuleLoader__.load({
 			 * carry marks and descriptions consistent with the rest of DSH.
 			 */
 			function PresetDropdown(props) {
-				const { value, options, disabled, onSwitch, t } = props;
+				const { value, options, disabled, onSwitch, placeholder, t } = props;
 				const [open, setOpen] = React.useState(false);
 				const [pos, setPos] = React.useState(null);
 				const btnRef = React.useRef(null);
@@ -1685,7 +1605,7 @@ window.__ModuleLoader__.load({
 				onClick: () => setOpen(!open),
 			}, [
 				current !== void 0 ? React.createElement("span", { key: "dot" }, presetMark(current.value)) : null,
-				React.createElement("span", { className: "dshk-wpValue", key: "v" }, current !== void 0 ? current.label : t("wpUnavailable")),
+				React.createElement("span", { className: "dshk-wpValue", key: "v" }, current !== void 0 ? current.label : (typeof placeholder === "string" ? placeholder : t("wpUnavailable"))),
 				React.createElement(ChevronDown, { className: "dshk-chevron" + (open ? " dshk-chevronOpen" : ""), key: "c" }),
 			]);
 			const portalHost = typeof document === "undefined" ? null : document.body;
@@ -1760,15 +1680,30 @@ window.__ModuleLoader__.load({
 			 * projection load returns immediately), so the re-run is cheap.
 			 */
 			const sessionKey = sessions.ids.join("\n");
+			/*
+			 * Read states are part of the key: a refresh adopts the fresh list without
+			 * changing the id set, yet it resets unanswered rows to `idle`. Without this
+			 * the effect would not re-run and the refresh control would be a no-op.
+			 */
+			const readKey = sessions.ids.map((id) => {
+				const summary = sessions.byId[id];
+				return summary === void 0 ? "" : summary.projectionRead;
+			}).join(",");
 			React.useEffect(() => {
 				for (const id of sessions.ids) {
 					const summary = sessions.byId[id];
 					if (summary === void 0 || summary.parentId !== void 0) continue;
 					if (archivedIds.has(id)) continue;
-					if (summary.projectionValues !== void 0 && summary.projectionValues.permissions !== void 0) continue;
+					/*
+					 * Gate on the read state, NOT on `projectionValues`: a row whose preset was
+					 * carried over from an earlier read still answers `current`, but its state
+					 * is `idle` because the new list had no hint for it — that is exactly the
+					 * row the refresh must re-read.
+					 */
+					if (summary.projectionRead !== "idle") continue;
 					ensureProjections(id);
 				}
-			}, [sessionKey, archivedIds]);
+			}, [sessionKey, readKey, archivedIds]);
 
 			React.useEffect(() => {
 				if (gate === null) return;
@@ -1807,6 +1742,19 @@ window.__ModuleLoader__.load({
 					const values = summary.projectionValues;
 					const permission = values !== void 0 ? values.permissions : void 0;
 					const current = permission !== void 0 && permission !== null && typeof permission.currentValue === "string" ? permission.currentValue : null;
+					/*
+					 * WHY A PLACEHOLDER. "Unavailable" used to be the answer to three very
+					 * different situations: the row has not been read yet (normal, and
+					 * transient), the Host served the row without a permission projection
+					 * (this deployment composes no permission service), or the read threw.
+					 * Collapsing them into one word sent users hunting for a bug that was
+					 * really a deployment fact — or, on a cold session, nothing at all.
+					 */
+					const placeholder = current !== null
+						? void 0
+						: summary.projectionRead === "idle" || summary.projectionRead === "loading"
+							? t("wpReading")
+							: summary.projectionRead === "error" ? t("wpReadFailed") : t("wpNoProjection");
 					const tags = [];
 					if (summary.id === sessions.current) tags.push(t("wpCurrent"));
 					if (summary.running === true) tags.push({ node: true, key: "run" });
@@ -1817,6 +1765,7 @@ window.__ModuleLoader__.load({
 						tags,
 						current,
 						options,
+						placeholder,
 						/*
 						 * A row is actionable when the Host advertises a catalog AND the
 						 * session actually carries a permission projection. The projection's
@@ -2041,7 +1990,7 @@ window.__ModuleLoader__.load({
 			const bulkOptions = panel.catalog.map((option) => ({ value: option.value, label: presetLabel(option.value, t) }));
 			const defaultState = panel.status === "error"
 				? text("wpLoadFailed") + (panel.error ?? "")
-				: panel.status === "unavailable" ? t("wpUnavailable") : null;
+				: panel.status === "unavailable" ? text("wpDefaultUnavailable") : null;
 			return React.createElement("div", { className: "dshk-page" }, [
 				React.createElement("p", { className: "dshk-intro", key: "intro" }, t("wpIntro")),
 				React.createElement("div", { className: "dshk-card", key: "default" }, [
@@ -2053,10 +2002,11 @@ window.__ModuleLoader__.load({
 							options: defaultOptions,
 							disabled: panel.writable !== true || defaultBusy,
 							onSwitch: switchDefault,
+							placeholder: defaultBusy ? text("wpReading") : text("wpUnavailable"),
 							t,
 						}),
 					]),
-					React.createElement("div", { className: "dshk-hint", key: "hint" }, panel.status === "error" ? defaultState : t("wpDefaultHint")),
+					React.createElement("div", { className: "dshk-hint", key: "hint" }, defaultState !== null ? defaultState : t("wpDefaultHint")),
 				]),
 				React.createElement("div", { className: "dshk-card", key: "sessions" }, [
 					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
@@ -2126,6 +2076,7 @@ window.__ModuleLoader__.load({
 						tags: row.tags,
 						value: row.current,
 						options: row.options,
+						placeholder: row.placeholder,
 						disabled: row.capable !== true,
 						onSwitch: (preset) => switchSession(row, preset),
 						/* Selection is offered only for rows that can actually be changed. */
@@ -2195,7 +2146,7 @@ window.__ModuleLoader__.load({
 			order: 61,
 			label: () => translate("wpNav"),
 			locale: NS,
-		}, PermissionsSection)), "hotkey-toolkit: permissions panel");
+		}, PermissionsSection)), "dsh-permission-panel: permissions panel");
 	}
 
 		exports.apply = apply;

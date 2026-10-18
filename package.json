@@ -1,7 +1,7 @@
 {
-  "name": "dsh-hotkey-toolkit",
-  "version": "2.1.0",
-  "description": "DSH 快捷键工具包（Web / Desktop 双载体）：快捷键已并入官方「设置 → 快捷键」界面（可录制 / 可恢复默认 / 与官方命令统一冲突检测），每个快捷键均可单独开关；工作区权限面板统一查看与切换所有会话的权限预设（支持批量选择一键修改，自动跳过已归档会话）。模型选择器搜索框已迁出，见 dsh-client-ui-effort-slider。",
+  "name": "dsh-permission-panel",
+  "version": "3.0.0",
+  "description": "DSH 工作区权限面板（Web / Desktop 双载体）：在「设置 → 工作区权限」里统一查看与切换每个会话的权限预设（沙盒模式 + 审批策略），支持批量选择一键修改、自动跳过已归档会话，并可设置新会话的默认权限；另提供一个「重启 DSH」命令（仅 Desktop，Ctrl+Shift+R）。",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -21,7 +21,7 @@
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
-    "dsh-hotkey-toolkit",
+    "dsh-permission-panel",
     "hotkey",
     "shortcut",
     "shortcuts",

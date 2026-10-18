@@ -87,6 +87,8 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
 function loadPlugin({ bridge, search, omit = [] }) {
   const reloads = [];
   const fetches = [];
+  /** Every argument the preload bridge was invoked with. */
+  const bridgeCalls = [];
   const commands = new Map();
   const registrations = new Map();
   /** Every `remote.settings.describe()` call: proof the settings binding fired. */
@@ -107,7 +109,7 @@ function loadPlugin({ bridge, search, omit = [] }) {
       if (type === "keydown") { const at = windowKeydown.indexOf(listener); if (at >= 0) windowKeydown.splice(at, 1); }
     },
   };
-  if (bridge) fakeWindow.dshDesktopActions = { invoke: async () => {} };
+  if (bridge) fakeWindow.dshDesktopActions = { invoke: async (action) => { bridgeCalls.push(action); } };
 
   const previousWindow = global.window;
   global.window = fakeWindow;
@@ -204,7 +206,7 @@ function loadPlugin({ bridge, search, omit = [] }) {
   plugin.apply(ctx);
 
   global.window = previousWindow;
-  const carrier = { bridge, search, windowKeydown, reloads, fetches, modeWrites, registrations, commands, settingsReads };
+  const carrier = { bridge, search, windowKeydown, reloads, fetches, bridgeCalls, modeWrites, registrations, commands, settingsReads };
   loaded.push(carrier);
   return carrier;
 }
@@ -284,8 +286,8 @@ const collectElements = (node, predicate) => {
 
 /** Render the settings page for one carrier. */
 const renderSettings = (carrier) => {
-  const Section = carrier.registrations.get("hotkey-toolkit");
-  if (Section === undefined) throw new Error("the hotkey-toolkit settings section was never registered");
+  const Section = carrier.registrations.get("dsh-permission-panel");
+  if (Section === undefined) throw new Error("the dsh-permission-panel settings section was never registered");
   hookSlots.clear();
   ownerCounter = 0;
   hookOwner = "c" + (++ownerCounter);
@@ -304,11 +306,7 @@ const flush = async () => { for (let turn = 0; turn < 8; turn++) await Promise.r
 
 /** The exact set of command ids the plugin contributes to the official service. */
 const EXPECTED_COMMANDS = [
-  "hotkeyToolkit.refresh",
-  "hotkeyToolkit.restart",
-  "hotkeyToolkit.modeCompatibility",
-  "hotkeyToolkit.modeExtended",
-  "hotkeyToolkit.modeAdvanced",
+  "permissionPanel.restart",
 ];
 
 (async () => {
@@ -326,9 +324,11 @@ const EXPECTED_COMMANDS = [
     if (!web.commands.has(id)) throw new Error("web: command " + id + " was not contributed to the official shortcut service");
   }
 
-  // Desktop-only commands must ship NO web default: a web binding would advertise
-  // a key that can never fire (and would collide with official web bindings).
-  for (const id of ["hotkeyToolkit.restart", "hotkeyToolkit.modeCompatibility", "hotkeyToolkit.modeExtended", "hotkeyToolkit.modeAdvanced"]) {
+  // Restart is the plugin's only command; it must ship NO web default (a web
+  // binding would advertise a key that can never fire). On a browser carrier it
+  // must REFUSE rather than fire.
+  {
+    const id = "permissionPanel.restart";
     const defaults = web.commands.get(id).defaults;
     const webProfiles = Object.keys(defaults).filter((profile) => profile.startsWith("web:"));
     if (webProfiles.length !== 0) {
@@ -337,34 +337,24 @@ const EXPECTED_COMMANDS = [
     if (Object.keys(defaults).length === 0) {
       throw new Error("web: " + id + " lost its Desktop defaults entirely");
     }
-  }
-
-  // Refresh ships unbound on purpose (Ctrl+R belongs to the official page.refresh).
-  if (Object.keys(web.commands.get("hotkeyToolkit.refresh").defaults).length !== 0) {
-    throw new Error("web: Refresh declares a default binding; it must stay unbound so it cannot collide with the official page.refresh");
-  }
-
-  // On a browser carrier the Desktop-only actions must REFUSE, not fire.
-  for (const id of ["hotkeyToolkit.restart", "hotkeyToolkit.modeCompatibility", "hotkeyToolkit.modeExtended", "hotkeyToolkit.modeAdvanced"]) {
     const result = web.commands.get(id).resolve({ region: "page", modal: null, target: null });
     if (result.status !== "blocked") {
       throw new Error("web: " + id + " resolved to " + result.status + " on a browser carrier; it must refuse");
     }
   }
 
-  // The `dsh-desktop` namespace is Desktop-owned; writing its mode on a browser
-  // carrier would target a namespace that has no settings row.
-  if (web.modeWrites.length !== 0) throw new Error("web: wrote the dsh-desktop mode without the Desktop shell");
+  // The plugin contributes NO other command: Refresh and the three window-mode
+  // switches were removed in 2.1 (they duplicated official commands / wrote a
+  // Desktop-owned settings namespace).
+  for (const gone of ["permissionPanel.refresh", "permissionPanel.modeCompatibility", "permissionPanel.modeExtended", "permissionPanel.modeAdvanced"]) {
+    if (web.commands.has(gone)) {
+      throw new Error("web: " + gone + " is still contributed; the retained surface is Restart only");
+    }
+  }
 
-  // Refresh still works on the web carrier, via a page reload rather than a
-  // Desktop endpoint. The command is unbound by default, so it is invoked the way
-  // the official service invokes a command.
-  const webRefresh = web.commands.get("hotkeyToolkit.refresh").resolve({ region: "page", modal: null, target: null });
-  if (webRefresh.status !== "handled") throw new Error("web: Refresh did not resolve as handled");
-  webRefresh.run();
-  await flush();
-  if (web.reloads.length !== 1) throw new Error("web: Refresh did not reload the page (reloads=" + web.reloads.length + ")");
-  if (web.fetches.length !== 0) throw new Error("web: Refresh posted to a Desktop endpoint that does not exist; saw " + JSON.stringify(web.fetches.map((call) => call.url)));
+  // The `dsh-desktop` namespace is Desktop-owned; it must never be written here.
+  if (web.modeWrites.length !== 0) throw new Error("web: wrote the dsh-desktop namespace without the Desktop shell");
+  if (web.reloads.length !== 0) throw new Error("web: something reloaded the page; the Refresh command is gone");
 
   // ---- carrier A: the settings page reflects the smaller surface ----
   const webTree = renderSettings(web);
@@ -398,35 +388,36 @@ const EXPECTED_COMMANDS = [
     if (!desktop.commands.has(id)) throw new Error("desktop: command " + id + " was not contributed");
   }
   // Restart carries its Desktop default here.
-  const restartDefaults = desktop.commands.get("hotkeyToolkit.restart").defaults;
+  const restartDefaults = desktop.commands.get("permissionPanel.restart").defaults;
   for (const profile of ["desktop:macos", "desktop:windows", "desktop:linux"]) {
     if (restartDefaults[profile] === undefined) throw new Error("desktop: Restart has no default for " + profile);
   }
   /*
-   * Under the shell, the three mode commands must be HANDLED and must write the
-   * `dsh-desktop` namespace through `remote.settings.update`. 0.2.1 has no
-   * `configForms`, so the write itself — not a form lookup — is the surface.
+   * Under the shell, Restart must be HANDLED and ride the Desktop action bridge.
+   * Nothing may write the `dsh-desktop` namespace: the mode switches are gone, and
+   * that namespace belongs to the Desktop settings page.
    */
-  for (const id of ["hotkeyToolkit.modeCompatibility", "hotkeyToolkit.modeExtended", "hotkeyToolkit.modeAdvanced"]) {
-    const result = desktop.commands.get(id).resolve({ region: "page", modal: null, target: null });
-    if (result.status !== "handled") {
-      throw new Error("desktop: " + id + " resolved to " + result.status + " under the Desktop shell");
-    }
-    result.run();
+  const desktopRestart = desktop.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
+  if (desktopRestart.status !== "handled") {
+    throw new Error("desktop: Restart resolved to " + desktopRestart.status + " under the Desktop shell");
   }
+  desktopRestart.run();
   await flush();
-  const modeWrite = desktop.modeWrites.find((call) => call.ns === "dsh-desktop");
-  if (modeWrite === undefined) {
-    throw new Error("desktop: no dsh-desktop write reached remote.settings.update; saw " + JSON.stringify(desktop.modeWrites));
+  if (desktop.modeWrites.length !== 0) {
+    throw new Error("desktop: something wrote the dsh-desktop settings namespace; saw " + JSON.stringify(desktop.modeWrites));
   }
-  if (typeof modeWrite.patch.mode !== "string") {
-    throw new Error("desktop: the mode write carries no `mode`; saw " + JSON.stringify(modeWrite.patch));
+  /*
+   * The preload bridge is the preferred route and MUST win when it exists: the
+   * HTTP endpoint is only a fallback for a shell generation that ships no bridge.
+   */
+  if (!desktop.bridgeCalls.includes("restart")) {
+    throw new Error("desktop: Restart did not reach the preload bridge; saw " + JSON.stringify(desktop.bridgeCalls));
   }
-  // Under the shell, Refresh rides the Desktop action rather than a page reload.
-  const desktopRefresh = desktop.commands.get("hotkeyToolkit.refresh").resolve({ region: "page", modal: null, target: null });
-  desktopRefresh.run();
-  await flush();
-  if (desktop.reloads.length !== 0) throw new Error("desktop: Refresh used a browser reload instead of the Desktop action");
+  if (desktop.fetches.length !== 0) {
+    throw new Error("desktop: Restart fell back to HTTP although the preload bridge was available; saw "
+      + JSON.stringify(desktop.fetches.map((call) => call.url)));
+  }
+  if (desktop.reloads.length !== 0) throw new Error("desktop: something used a browser reload");
 
   const desktopTree = renderSettings(desktop);
   if (collect(desktopTree, (entry) => hasClass(entry, "dshk-platformNote")).length !== 0) {
@@ -437,9 +428,16 @@ const EXPECTED_COMMANDS = [
   // The bridge and the marker are independent signals; a generation that ships
   // only one of them must still be recognised as the shell.
   const marker = loadPlugin({ bridge: false, search: "?dsh-desktop-mode=extended" });
-  const markerRestart = marker.commands.get("hotkeyToolkit.restart").resolve({ region: "page", modal: null, target: null });
+  const markerRestart = marker.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
   if (markerRestart.status !== "handled") {
     throw new Error("marker: Restart refused on a shell detected from the URL marker alone");
+  }
+  // With no bridge the same command must fall back to the HTTP endpoint.
+  markerRestart.run();
+  await flush();
+  if (marker.fetches.every((call) => !String(call.url).includes("/restart"))) {
+    throw new Error("marker: Restart had no bridge and did not fall back to the HTTP endpoint; saw "
+      + JSON.stringify(marker.fetches.map((call) => call.url)));
   }
 
   // ---- carrier D: no archive stream at all ----
@@ -448,7 +446,7 @@ const EXPECTED_COMMANDS = [
   // failing open to an empty archive set. This is the assertion that keeps the
   // archive read out of the hard-gate `inject` array.
   const noWorkspaces = loadPlugin({ bridge: false, search: "", omit: ["remote.workspace"] });
-  if (!noWorkspaces.registrations.has("hotkey-toolkit")) {
+  if (!noWorkspaces.registrations.has("dsh-permission-panel")) {
     throw new Error("no-archive: the settings section was not registered; a missing optional surface must not break activation");
   }
   if (!noWorkspaces.registrations.has("workspace-permissions")) {
@@ -497,7 +495,7 @@ const EXPECTED_COMMANDS = [
   }
 
   // ---- dictionary parity: both locales must carry the same keys ----
-  for (const ns of ["hotkeyToolkit"]) {
+  for (const ns of ["permissionPanel"]) {
     const dict = registeredDictionaries.get(ns);
     if (dict === undefined) throw new Error("dictionary " + ns + " was never registered");
     const zhKeys = Object.keys(dict.zh).sort();
@@ -513,7 +511,7 @@ const EXPECTED_COMMANDS = [
   console.log(
     "platform ok: web commands=" + web.commands.size + " no-keydown-listener=1"
     + " desktop-bound-scope=1 detection=[bridge,marker] locale-parity=1"
-    + " web-defaults=0 refresh-unbound=1"
+    + " web-defaults=0 restart-only=1 no-desktop-namespace-write=1"
     + " soft-workspaces=1",
   );
 })().catch((error) => {
