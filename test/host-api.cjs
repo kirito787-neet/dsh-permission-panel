@@ -143,23 +143,43 @@ for (const required of [
  * binding meant every session the user had not opened threw
  * "该会话暂时无法下发指令（尚未装载）".
  *
- * 0.2.1 types the first argument as the receiving Agent (`{ id }`); 0.1.x took
- * the bare id. The panel tries the current shape first and keeps the old call as
- * a fallback.
+ * The first argument is the receiving Agent, but on the WIRE it is the bare
+ * Session id: `commands/execute` declares
+ * `parameters[0] = { name: "agent", wire: "agentId", source: "lookup",
+ * codec: SessionId }` with `jsonSchema: { type: "string" }`. Every official
+ * caller writes `execute(sessionId, line, [])`.
+ *
+ * This test used to assert the OPPOSITE (that `{ id }` is passed), copying a
+ * wrong assumption into the guard, so it happily certified the bug that made
+ * every switch fail with
+ * `typert gateway: commands/execute: wire field "agentId" failed boundary
+ * validation`. The assertion is now derived from the wire contract: an
+ * object first argument is the failure.
  */
 if (/binding\(row\.id\)/u.test(live)) {
   throw new Error("client.js resolves a per-row client-side session binding to dispatch a command. "
     + "`binding()` never materializes a scope, so any session the user has not opened refuses with "
     + "\"not materialized yet\". Dispatch by id through remote.commands.execute instead.");
 }
-if (!/typeof remoteCommands\.execute === "function"/u.test(live)) {
+if (!/typeof remoteCommands\.execute [!=]== "function"/u.test(live)) {
   throw new Error("client.js no longer gates on `typeof remoteCommands.execute === 'function'`; "
     + "the by-id dispatch path has been disabled and only the binding fallback remains, which "
     + "cannot reach sessions the user has not opened");
 }
-if (!/\{ id \}/u.test(live) && !/\{ id \}/u.test(source)) {
-  throw new Error("client.js no longer passes the receiving Agent (`{ id }`) to commands.execute; "
-    + "0.2.1 changed the first argument from the bare Session id.");
+/*
+ * `commands/execute` serializes its first parameter as a bare SessionId string.
+ * An object literal here (the `{ id }` Agent shape) is rejected by the gateway
+ * before the handler runs, so every preset switch fails. Match the ONLY correct
+ * call shape and reject the object one explicitly.
+ */
+if (/\.execute\(\s*\{/u.test(live)) {
+  throw new Error("client.js passes an OBJECT to commands.execute. The wire parameter is "
+    + "`agentId` with codec SessionId (jsonSchema: {\"type\":\"string\"}), so an object fails "
+    + "with `wire field \"agentId\" failed boundary validation`. Pass the bare Session id.");
+}
+if (!/\.execute\(\s*id\s*,/u.test(live)) {
+  throw new Error("client.js no longer passes the bare target Session id as the first argument "
+    + "to commands.execute; the wire parameter agentId is a SessionId string.");
 }
 
 // ---- behavioural check: activate against the real 0.2.1 surface only ----
@@ -280,7 +300,16 @@ const activate = (desktop) => {
         },
       },
       commands: {
+        /*
+         * Reject a non-string first argument the way the gateway does: the
+         * `agentId` wire field is typed SessionId, so an object never reaches a
+         * handler. Modelling the refusal here is what makes the suite catch the
+         * object-form regression instead of recording it as a pass.
+         */
         execute: async (target, line, attachments) => {
+          if (typeof target !== "string") {
+            return { ok: false, error: { code: "gateway/input-invalid", message: "wire field \"agentId\" failed boundary validation" } };
+          }
           executes.push({ target, line, attachments });
           return { ok: true, value: { commandId: "c", result: { kind: "success" } } };
         },
@@ -474,10 +503,11 @@ settle().then(() => {
   }
 
   /*
-   * Commands dispatch through `remote.commands.execute` with the receiving Agent
-   * as the first argument (0.2.1 shape). That path only runs on a user action, so
-   * this suite asserts the CALL SHAPE in source rather than faking a click: the
-   * static check above already requires `{ id }`, and smoke.cjs owns interaction.
+   * Commands dispatch through `remote.commands.execute` with the BARE Session id
+   * as the first argument — the `agentId` wire parameter is typed SessionId
+   * (jsonSchema string), so an object is a boundary-validation failure. That path
+   * only runs on a user action, so this suite asserts the CALL SHAPE in source
+   * rather than faking a click; smoke.cjs owns interaction.
    */
 
   console.log(

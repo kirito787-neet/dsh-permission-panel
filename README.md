@@ -57,7 +57,7 @@ DSH 的**工作区权限面板**，外加唯一一个官方快捷键：**重启 
 | 归档集合 | `remote.workspace.follow(signal)` 流，消费 `baseline` / `replace` / `archived` 帧里的 `archivedSessionIds` |
 | 读写设置 | `remote.settings.describe()`、`remote.settings.mutate(ns, ops, revision)` |
 | 预设目录 | `remote.permissionPresets.catalog()` → `{ options, defaultOptions, defaultPreset }` |
-| 下发权限命令 | `remote.commands.execute({ id }, "/permission <preset>", [], signal)`；0.2.1 首参是接收方 Agent，旧的裸 id 形态保留为回退 |
+| 下发权限命令 | `remote.commands.execute(sessionId, "/permission <preset>", [], signal)` —— **首参是裸 Session id 字符串**，不是 `{ id }` 对象 |
 
 **嵌套命名空间逐个门控**：`ctx.remote` 是一个服务，而 `remote.session`、`remote.settings`、`remote.permissionPresets`、`remote.workspace`、`remote.commands` 各自是独立注册的服务。只声明 `remote` **不覆盖**子命名空间——读取会抛 `cannot get property "remote.workspace" without inject`。因此每个用到的 `remote.<ns>` 都在 `inject` 数组里单独列一条；`test/host-api.cjs` 静态扫描活跃代码里所有 `remote.<ns>` 读取并逐条校验，漏一个就失败。
 
@@ -84,6 +84,27 @@ DSH 的**工作区权限面板**，外加唯一一个官方快捷键：**重启 
 3.0.0 把这种「缺席」当成了「损坏」：`typeof value !== "string"` 直接判失败，于是新会话默认权限那行在**完全健康的部署**上显示「默认权限加载失败：permission settings has no defaultPreset value」。用户看到的正是这句。
 
 修法照官方那行写：`view.value.defaultPreset ?? catalog.defaultPreset`。宿主始终知道**有效默认值**（composition 里的 `presets` 折算出 `defaultPreset` 并随 catalog 发布），它才是这种情形的权威来源。现在只有「命名空间里没写 **且** catalog 也没给出有效值」才算失败，且失败文案会同时点明两处都缺。
+
+## 3.0.2 修掉的缺陷：`agentId` 在 wire 上是字符串
+
+点行内下拉切换会话权限时报 `typert gateway: commands/execute: wire field "agentId" failed boundary validation`。
+
+`commands.execute` 在 TypeScript 里的签名是 `execute(agent: Agent, line, attachments, signal)`，`Agent = { id: SessionId }`——看起来该传对象。但 typert 描述符把这个参数声明为：
+
+```js
+scope: { context: "agent", wire: "agentId" },
+parameters[0]: {
+  name: "agent", wire: "agentId",
+  source: "lookup", lookup: "agent",
+  codec: { mode: "strict", typeSymbol: "…#SessionId", jsonSchema: { type: "string" } },
+}
+```
+
+`source: "lookup"` 表示**网关自己按 wire 值解析出 Agent**，调用方只负责送一个 `SessionId` 字符串。送 `{ id }` 会在 handler 之前就被边界校验拒掉。
+
+旧实现写了个「两种形状都试」的循环（`for (const target of [{ id }, id])`）。它不但没用，还把错误变坏：对象形状在任何载体上都不会成功，而 `catch` 里的 `continue` 让第一次失败只留下一条被吞掉的日志，最终报出来的是更晚、更难追的第二条。现在只有一个调用 `execute(id, line, [], signal)`——官方四处调用（`remote.commands.execute(this.sessionId, line, [])` 等）全是裸 id。
+
+顺带修了三处测试桩：它们原先**接受任意形状**，于是看到一次被记录的调用就判定通过，正是这个「宽松的假宿主」让 bug 通过了测试。现在桩会像网关一样拒绝非字符串首参，`test/host-api.cjs` 还会静态断言源码里不出现 `.execute(` 后紧跟 `{`。
 
 ## 安装
 
@@ -121,7 +142,7 @@ npm test   # 无外部依赖：键位审计 / 词典 / 宿主 API / 迁移兼容
 
 - **`test/binding-audit.cjs`** — 键位审计。官方 `shortcuts.register()` 会一次性校验**全部** `runtime:platform` 档位（不只是当前设备），任一档位触发保留键、Web 不合法组合或与其它命令默认值重叠都会**抛错**，而该异常会穿过 `ctx.effect` 直接让插件激活失败。本套件复刻 `normalizeBinding` / `isWebBindingAllowed` / `bindingIssue` / `overlappingBindings`，断言所有「命令 × 档位」组合合法且与官方核心默认值零冲突，并带**反向对照**（`Ctrl+R`、裸 `Esc`、`Ctrl+C`、`Numpad0` 必须被判非法），确保审计本身不是空转。
 - **`test/dictionaries.cjs`** — 词典完整性。`zh` / `en` 键集完全一致、代码里每个字面量 `t("key")` 都存在。宿主本地化**不跨命名空间回退**，缺键会把原始键名直接显示给用户。
-- **`test/host-api.cjs`** — 宿主 API 兼容。剥掉注释后只查活跃代码：断言不再出现已移除的 `settingsScope`、客户端 `sessions.list` 与 `workspaces.list` 快照，也不再从 `permissions` 投影读 `options`；断言每个 `remote.<ns>` 读取都在 `inject` 声明过；断言 `workspaces` / `shortcuts` / `sessions` **不在**硬门控数组里；断言面板确实使用 `remote.session.list`、`remote.session.projections`、`remote.workspace.follow`，并以 `{ id }` 形状下发命令。行为检查在**两种载体**上、仅用 0.2.1 真实提供的接口激活插件。
+- **`test/host-api.cjs`** — 宿主 API 兼容。剥掉注释后只查活跃代码：断言不再出现已移除的 `settingsScope`、客户端 `sessions.list` 与 `workspaces.list` 快照，也不再从 `permissions` 投影读 `options`；断言每个 `remote.<ns>` 读取都在 `inject` 声明过；断言 `workspaces` / `shortcuts` / `sessions` **不在**硬门控数组里；断言面板确实使用 `remote.session.list`、`remote.session.projections`、`remote.workspace.follow`，并断言 `commands.execute` 的首参是裸 Session id（出现对象形状即失败）。行为检查在**两种载体**上、仅用 0.2.1 真实提供的接口激活插件。
 - **`test/legacy-model-search.cjs`** — 迁移兼容。真实加载 `client.js`、渲染设置页、按行定位开关并调用其 `onChange`，断言偏好文档里的 `modelSearch` 字段在每次整份重写后都**完好保留**。
 - **`test/smoke.cjs`** — 面板渲染与交互。夹具是 `remote.session.list` 返回的行；断言行内下拉**没有被禁用**、点击后按会话 id 下发 `/permission`、默认权限写入携带 revision、批量只作用于勾选行（未勾选行被刻意放在同一预设上，使「忽略选择」必然产生第二条命令）、归档会话不出现且跳过数被报告。
 - **`test/platform.cjs`** — 双载体回归。以「有 preload 桥」「只有 URL 标记」「两者都没有」三种页面加载真实 `client.js`，断言插件**不再安装自己的全局 `keydown` 监听**、命令已贡献给官方服务、Desktop-only 命令**不含任何 Web 档位默认值**且在 Web 下 `resolve` 返回 `blocked`；并在**完全不提供 `workspaces`** 的载体上再加载一次，验证软门控缺失时插件仍能激活。
@@ -152,6 +173,6 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 - **载体识别每次调用即时探测**，不在激活时缓存一次：插件可能被热重载进一个稍后才装上 preload 桥的页面，缓存住一次否定会让宿主本可提供的命令永久失效。
 - **Desktop 专有命令在 Web 下是「不声明默认键位 + `resolve` 拒绝」**，而不是渲染成灰色行：置灰会暗示别的含义，而这里缺的是宿主能力，不是用户权限。
 - **读投影不等于开会话**：`retain()` 会实体化 scope 并打开历史；列表型功能必须用 `projections` 冷读，否则「看一眼所有会话的权限」会变成「把所有会话都打开一遍」。
-- **按 id 下发命令，不要先拿 binding**：`sessions.binding(id)` 只返回已存在的 scope、从不创建；`remote.commands.execute({ id }, …)` 走宿主按需恢复，未打开的会话是完全合法的目标。
+- **按 id 下发命令，不要先拿 binding**：`sessions.binding(id)` 只返回已存在的 scope、从不创建；`remote.commands.execute(sessionId, …)` 走宿主按需恢复，未打开的会话是完全合法的目标。
 - **迁移待办会话（`migration-required`）**：宿主此时可能只给缓存里的部分投影键，其中也许没有 `permissions`。面板把这类行保留为不可用（fail-open），不会因为读不到就把会话从列表里藏掉。
 - **探测失败不静默**：面板侧的服务探测失败会打 `console.error` 并写入全局诊断槽，把「面板莫名空白」变成一行可读答案。

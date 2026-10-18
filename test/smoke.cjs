@@ -167,13 +167,23 @@ const fakeScope = {
       },
     },
     /*
-     * The slash-command surface the panel dispatches through. 0.2.1 types the
-     * first argument as the receiving Agent (`{ id }`); the panel also retries
-     * with the bare id on an older carrier. Recording both shapes is what lets
-     * the suite assert the panel addressed the right session.
+     * The slash-command surface the panel dispatches through.
+     *
+     * The first argument is a BARE Session id: `commands/execute` declares
+     * `parameters[0] = { name: "agent", wire: "agentId", source: "lookup",
+     * codec: SessionId }` with `jsonSchema: { type: "string" }`. An object here
+     * is rejected by the gateway as
+     * `wire field "agentId" failed boundary validation` before the handler runs.
+     *
+     * This stub therefore REJECTS an object the way the gateway does, instead of
+     * accepting whatever it is handed. Accepting both shapes is what let the
+     * object-form bug ship: the suite saw a recorded call and called it a pass.
      */
     commands: {
       execute: async (target, line) => {
+        if (typeof target !== "string") {
+          return { ok: false, error: { code: "gateway/input-invalid", message: "wire field \"agentId\" failed boundary validation" } };
+        }
         commandCalls.push({ target, line });
         return { ok: true, value: { commandId: "c", result: { kind: "success" } } };
       },
@@ -404,7 +414,7 @@ const openDropdown = (index) => {
    * unopened session), so a regression to that path fails here rather than in the
    * user's browser as "该会话暂时无法下发指令（尚未装载）".
    */
-  if (commandCalls[0].target === null || typeof commandCalls[0].target !== "object" || commandCalls[0].target.id !== "s1") {
+  if (commandCalls[0].target !== "s1") {
     throw new Error("case 3/4: the command was not addressed to the clicked session by id; saw target=" + JSON.stringify(commandCalls[0].target));
   }
 
@@ -637,7 +647,7 @@ const openDropdown = (index) => {
    * change — so if the implementation ignored the tick and targeted every row,
    * a second dispatch would appear here and this assertion would fail.
    */
-  const bulkTargets = commandCalls.map((call) => (call.target !== null && typeof call.target === "object" ? call.target.id : call.target)).sort();
+  const bulkTargets = commandCalls.map((call) => call.target).sort();
   if (bulkTargets.length !== 1 || bulkTargets[0] !== "s1") {
     throw new Error("case 11: bulk apply must touch exactly the ticked session (s1); saw " + JSON.stringify(commandCalls));
   }
