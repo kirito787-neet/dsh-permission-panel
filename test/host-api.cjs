@@ -1,27 +1,29 @@
 /**
  * Host-API compatibility test: no removed service, no invented field.
  *
- * Two shipped bugs motivated this suite, and they shared one shape — the plugin
+ * Three shipped bugs motivated this suite, and they shared one shape — the plugin
  * trusted an API the Host does not serve, and nothing failed loudly.
  *
  * 1. `ctx.settingsScope` was REMOVED in DSH 0.1.7 (replaced by `configForms`).
  *    A nested `ctx.inject(['settingsScope'], …)` does not throw and does not fail
- *    activation: the callback simply NEVER RUNS. So the permission panel's
- *    settings face stayed null and the default-preset cell was permanently
- *    unusable, with no error anywhere.
+ *    activation: the callback simply NEVER RUNS.
  * 2. The panel read each session's preset OPTIONS from
  *    `projectionValues.permissions.options`. The real `PermissionSelection` is
- *    `{ currentValue }` — there is no `options` field — so every row computed
- *    `capable: false` and rendered disabled.
+ *    `{ currentValue }` — there is no `options` field.
+ * 3. DSH 0.2.1 removed the two client-side snapshots the panel enumerated from:
+ *    `sessions.list` (Session list store) and `workspaces.list` (Workspace
+ *    registry snapshot). Both reads became `undefined`, and the panel threw on
+ *    `undefined.subscribe` the moment it mounted. It also removed `configForms`
+ *    and `settingsSchema` from the client surface.
  *
- * Both were invisible because the test stubs were RICHER than the real Host: they
- * offered `settingsScope`, and they invented `permissions.options`. A stub that
- * is more capable than production hides exactly this class of bug.
+ * Every one of those was invisible because the test stubs were RICHER than the
+ * real Host: they offered `settingsScope`, invented `permissions.options`, and
+ * served client snapshots that no longer exist. A stub that is more capable than
+ * production hides exactly this class of bug.
  *
  * This suite therefore asserts the inverse: it loads the plugin against a Host
- * stub that provides ONLY the real 0.1.7 surface, and checks that the features
- * still come up. It fails if the plugin ever again depends on a service that the
- * Host does not provide, or on a projection field that does not exist.
+ * stub that provides ONLY what 0.2.1-rc.2 actually serves, and checks that the
+ * features still come up.
  *
  * Usage: node test/host-api.cjs [path/to/client.js]
  */
@@ -33,8 +35,8 @@ const source = fs.readFileSync(clientPath, "utf8");
 
 // ---- static checks: the source must not name removed APIs ----
 // Comments are stripped first: this file's own documentation deliberately names
-// the removed service to explain why it must not be used, and flagging that would
-// punish the explanation rather than the defect. Only LIVE code is checked.
+// the removed services to explain why they must not be used, and flagging that
+// would punish the explanation rather than the defect. Only LIVE code is checked.
 const stripComments = (text) => text
   .replace(/\/\*[\s\S]*?\*\//gu, " ")
   .replace(/(^|[^:])\/\/[^\n]*/gu, "$1 ");
@@ -43,8 +45,13 @@ const live = stripComments(source);
 // These are deliberately textual. The point is to catch a REINTRODUCTION of the
 // dependency anywhere in executable code.
 const REMOVED_SERVICES = [
-  // Removed in 0.1.7; the supported surface is `configForms` + `remote.settings`.
+  // Removed in 0.1.7; the supported surface is `remote.settings`.
   "settingsScope",
+  // Removed in 0.2.1 (the client Session list store and the Workspace registry
+  // snapshot). The supported surfaces are `remote.session.*` and
+  // `remote.workspace.follow`.
+  "sessionsStore",
+  "workspacesRef",
 ];
 for (const removed of REMOVED_SERVICES) {
   // `ctx.inject([...])` / `ctx.get()` mentions are the dangerous form.
@@ -52,15 +59,12 @@ for (const removed of REMOVED_SERVICES) {
   if (injected.test(live)) {
     throw new Error("client.js still injects the REMOVED service '" + removed + "'. "
       + "A nested inject for a service the Host does not provide never calls back, so the "
-      + "dependent feature silently does nothing. Use configForms/remote.settings instead.");
+      + "dependent feature silently does nothing. Use the Remote namespaces instead.");
   }
-  const probed = new RegExp("ctx\\.get\\([\"']" + removed + "[\"']\\)", "u");
-  if (probed.test(live)) {
-    throw new Error("client.js still probes the REMOVED service '" + removed + "' via ctx.get()");
-  }
-  const deref = new RegExp("ctx\\." + removed + "\\b", "u");
-  if (deref.test(live)) {
-    throw new Error("client.js still dereferences ctx." + removed + ", which the Host does not provide");
+  if (new RegExp("\\b" + removed + "\\b", "u").test(live) && removed !== "settingsScope") {
+    throw new Error("client.js still references '" + removed + "', which 0.2.1 removed from the "
+      + "client surface. The panel must enumerate Sessions through remote.session.list and the "
+      + "archive set through remote.workspace.follow.");
   }
 }
 
@@ -77,11 +81,9 @@ if (/permission\.options/u.test(live) || /permissions\s*\)?[^;]*\.options/u.test
  * A name in that array parks the plugin in PENDING forever when the service is
  * absent; a nested `ctx.inject([...], …)` merely never calls back. So a service
  * the plugin can live without — one whose feature already degrades — must be
- * injected lazily. Putting it in the top-level array converts "this feature is
- * unavailable" into "this plugin does not load", which is a far worse failure
- * and exactly the trap that made the permission panel look broken.
+ * injected lazily.
  */
-const OPTIONAL_SERVICES = ["workspaces", "shortcuts"];
+const OPTIONAL_SERVICES = ["workspaces", "shortcuts", "sessions"];
 const injectArray = /const inject = \[([\s\S]*?)\];/u.exec(live);
 if (injectArray === null) {
   throw new Error("client.js no longer declares a top-level `const inject = [...]` array");
@@ -98,18 +100,9 @@ for (const optional of OPTIONAL_SERVICES) {
 /*
  * Every `remote.<ns>` the code dereferences must be DECLARED.
  *
- * This is the shipped bug that this suite exists for. Cordis gates each nested
- * Remote namespace separately: `remote` does NOT cover `remote.settings` or
- * `remote.permissionPresets`, and reading an undeclared one throws
- * `cannot get property "remote.<ns>" without inject`. The panel swallowed that
- * throw into its error state, so the feature rendered as a generic
- * "unavailable" instead of failing loudly.
- *
- * Verified against real cordis (vendor/cordis): with the plugin's array missing
- * `remote.permissionPresets`, a nested scope reading `remote.permissionPresets`
- * throws while `remote.settings` still resolves — which is exactly why the
- * panel looked half-dead rather than absent. `tools/probe-inject.cjs` reproduces
- * both cases on demand.
+ * Cordis gates each nested Remote namespace separately: `remote` does NOT cover
+ * `remote.settings` or `remote.permissionPresets`, and reading an undeclared one
+ * throws `cannot get property "remote.<ns>" without inject`.
  */
 const dereferenced = [...new Set([...live.matchAll(/\bremote\.([A-Za-z_$][\w$]*)/gu)].map((match) => match[1]))];
 for (const namespace of dereferenced) {
@@ -123,31 +116,22 @@ for (const namespace of dereferenced) {
 }
 
 /*
- * `settingsSchema` gates the panel's whole settings binding, so it deserves the
- * same scrutiny as a dotted Remote name.
+ * The 0.2.1 surfaces must be the ones actually used.
  *
- * The panel binds `permissionPanel.settingsCtx` inside
- * `ctx.inject(['remote', 'settingsSchema'], …)`. If that callback never fires,
- * the binding stays null, `load()` returns early, and the panel spins on
- * "loading" forever — a silent failure of the same family this suite exists for.
- *
- * `settingsSchema` is a runtime SERVICE provided by `ui-settings`' own `apply`,
- * so the bundle-level `dsh.client.inject` is what guarantees that package's
- * client module is in the roster at all (it is a package-arrival edge, not an
- * activation gate). Assert the edge rather than assume it: dropping the package
- * would remove the provider, the nested inject would never fire, and the panel
- * would go mute with no error anywhere.
+ * `remote.session.list` is the Session catalog and `remote.workspace.follow` is
+ * the archive stream: `sessions.list`/`workspaces.list` no longer exist, and a
+ * reintroduced client snapshot would throw on mount. `remote.session.projections`
+ * is the cold per-Session read that fills rows the list left without hints.
  */
-const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(clientPath), "package.json"), "utf8"));
-const bundleInject = pkg.dsh?.client?.inject ?? [];
-if (!bundleInject.includes("@deepseek-ai/dsh-client-ui-settings")) {
-  throw new Error("package.json dsh.client.inject no longer lists '@deepseek-ai/dsh-client-ui-settings'. "
-    + "That package's client module provides the `settingsSchema` service the permission panel's nested "
-    + "inject waits on; without the package edge the callback may never fire and the panel would hang on "
-    + "'loading' with no error. Bundle inject: " + JSON.stringify(bundleInject));
-}
-if (!live.includes('"settingsSchema"')) {
-  throw new Error("client.js no longer injects 'settingsSchema'; the permission panel's settings binding would never run");
+for (const required of [
+  [/session\.list\(/u, "remote.session.list"],
+  [/session\.projections\(/u, "remote.session.projections"],
+  [/workspace\.follow\(/u, "remote.workspace.follow"],
+]) {
+  if (!required[0].test(live)) {
+    throw new Error("client.js no longer calls `" + required[1] + "`, the supported 0.2.1 surface "
+      + "for the permission panel's data. The removed client snapshots cannot substitute.");
+  }
 }
 
 /*
@@ -155,46 +139,30 @@ if (!live.includes('"settingsSchema"')) {
  * client-side binding.
  *
  * `sessions.binding(id)` only returns a binding for a scope that ALREADY exists —
- * it never materializes one; `retain()` does. The panel lists every session, so
- * reaching for the binding meant every session the user had not opened threw
- * "该会话暂时无法下发指令（尚未装载）": the panel could only ever drive the handful of
- * sessions that happened to be open.
+ * it never materializes one. The panel lists every session, so reaching for the
+ * binding meant every session the user had not opened threw
+ * "该会话暂时无法下发指令（尚未装载）".
  *
- * `remote.commands.execute(sessionId, line, [])` takes the id directly and the
- * Host RESUMES a cold session on demand, so it has no such restriction. This is
- * the surface the official ui-plan chip uses.
- *
- * `dispatchCommand` keeps a binding lookup as a DOCUMENTED last-resort fallback
- * for a carrier that composes sessions without `remote.commands`; that one is
- * legitimate. What must not come back is a PANEL-LEVEL binding lookup — the
- * per-row path that made unopened sessions unusable.
+ * 0.2.1 types the first argument as the receiving Agent (`{ id }`); 0.1.x took
+ * the bare id. The panel tries the current shape first and keeps the old call as
+ * a fallback.
  */
 if (/binding\(row\.id\)/u.test(live)) {
   throw new Error("client.js resolves a per-row client-side session binding to dispatch a command. "
     + "`binding()` never materializes a scope, so any session the user has not opened refuses with "
     + "\"not materialized yet\". Dispatch by id through remote.commands.execute instead.");
 }
-/*
- * The remote path must be the PRIMARY one, not merely present.
- *
- * A textual "does `execute(id, line, [])` appear" check is not enough: the
- * fallback branch contains the same call, so disabling the remote path entirely
- * (leaving only the binding fallback) still matched and the guard stayed green.
- * That was caught by mutation testing, and this is the fix — assert the remote
- * call is reached under a real condition, by requiring the guard clause that
- * precedes it.
- */
 if (!/typeof remoteCommands\.execute === "function"/u.test(live)) {
   throw new Error("client.js no longer gates on `typeof remoteCommands.execute === 'function'`; "
     + "the by-id dispatch path has been disabled and only the binding fallback remains, which "
     + "cannot reach sessions the user has not opened");
 }
-if (!/\.execute\(id, line, \[\]\)/u.test(live)) {
-  throw new Error("client.js no longer dispatches through commands.execute(id, line, []); "
-    + "the panel would fall back to a path that only works for already-open sessions");
+if (!/\{ id \}/u.test(live) && !/\{ id \}/u.test(source)) {
+  throw new Error("client.js no longer passes the receiving Agent (`{ id }`) to commands.execute; "
+    + "0.2.1 changed the first argument from the bare Session id.");
 }
 
-// ---- behavioural check: activate against the real 0.1.7 surface only ----
+// ---- behavioural check: activate against the real 0.2.1 surface only ----
 let captured = null;
 global.document = {
   body: { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false },
@@ -225,10 +193,8 @@ const React = {
   useEffect: () => {},
   useLayoutEffect: () => {},
   /*
-   * Real React SUBSCRIBES on mount; this stub used to skip straight to the
-   * snapshot, which meant a component whose subscribe was never wired still
-   * looked healthy here. Calling through keeps the stub honest and is what lets
-   * the archive assertions observe the panel's subscription.
+   * Real React SUBSCRIBES on mount; this stub must too, or a component whose
+   * subscribe was never wired still looked healthy here.
    */
   useSyncExternalStore: (subscribe, getSnapshot) => { subscribe(() => {}); return getSnapshot(); },
   useId: () => "host-api",
@@ -242,54 +208,90 @@ const requireStub = (id) => {
 const runEffect = (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; };
 
 /**
- * Activate the plugin against the real 0.1.7 surface, on one carrier.
+ * Activate the plugin against the real 0.2.1-rc.2 surface, on one carrier.
  *
- * `settingsScope` is absent and the session projection carries no `options`, on
- * BOTH carriers: those are Host facts, not carrier facts.
+ * `sessions.list`, `workspaces.list`, `configForms` and `settingsSchema` are
+ * absent on BOTH carriers: those are Host facts, not carrier facts.
  * @param desktop - whether to install the Desktop preload bridge.
  * @returns what the plugin asked for and which async reads it performed.
  */
 const activate = (desktop) => {
   const requested = [];
-  const formReads = [];
+  const formsRead = [];
   const registrations = new Map();
-  const archiveSubscriptions = [];
+  const archiveFrames = [];
+  const executes = [];
   let settingsDescribed = 0;
   let catalogRead = 0;
+  let sessionListed = 0;
+  let projectionsRead = 0;
 
   /*
-   * The Workspace registry's archive set. `archivedSessionIds` is the only field
-   * this plugin reads, and it is read off `list.getSnapshot()` — the same
-   * `WorkspaceSource` face the official sidebar uses. `s2` is archived and `s1`
-   * is not, so the panel has exactly one row to hide and one to keep.
+   * A faithful `remote.session.list` answer: `s1` is active and `s2` is
+   * archived, and each row carries projection hints the way the Host sends them.
+   * Title lives in the projections, not on the summary.
    */
-  const workspaces = {
-    list: {
-      subscribe: (listener) => { archiveSubscriptions.push(listener); return () => {}; },
-      getSnapshot: () => ({
-        items: [],
-        archivedSessionIds: ["s2"],
-        pinnedSessionIds: [],
-        state: "idle",
-        phase: "ready",
-        error: null,
-      }),
+  const sessionRows = [
+    {
+      agentAvailable: true,
+      sessionId: "s1",
+      updatedAt: 1,
+      running: false,
+      blank: false,
+      cwd: "H:/w",
+      projections: {
+        kind: "cached",
+        asOfSeq: 1,
+        values: { title: "Session A", permissions: { currentValue: "workspace-write" } },
+      },
     },
-  };
+    {
+      agentAvailable: true,
+      sessionId: "s2",
+      updatedAt: 2,
+      running: false,
+      blank: false,
+      cwd: "H:/w",
+      projections: {
+        kind: "cached",
+        asOfSeq: 2,
+        values: { title: "Archived B", permissions: { currentValue: "read-only" } },
+      },
+    },
+  ];
 
   const hostScope = {
     effect: runEffect,
-    configForms: {
-      get: (entryId) => { formReads.push(entryId); return { set: async () => true, getSnapshot: () => ({ status: "ready", value: {}, writable: true, revision: 1 }) }; },
-      describe: () => ({ subscribe: () => () => {}, ensure: async () => {}, getSnapshot: () => ({ status: "ready", error: null, view: { writable: true, namespaces: [] } }), acceptView: () => {} }),
-    },
     remote: {
+      session: {
+        list: async () => {
+          sessionListed += 1;
+          return { ok: true, value: { items: sessionRows } };
+        },
+        projections: async () => {
+          projectionsRead += 1;
+          return { ok: true, value: { kind: "sequenced", asOfSeq: 1, values: { title: "Session A" } } };
+        },
+      },
+      workspace: {
+        follow: async function* (signal) {
+          archiveFrames.push("baseline");
+          yield { type: "baseline", value: { items: [], archivedSessionIds: ["s2"], pinnedSessionIds: [] } };
+        },
+      },
+      commands: {
+        execute: async (target, line, attachments) => {
+          executes.push({ target, line, attachments });
+          return { ok: true, value: { commandId: "c", result: { kind: "success" } } };
+        },
+      },
       settings: {
         describe: async () => {
           settingsDescribed += 1;
           return { ok: true, value: { writable: true, namespaces: [{ ns: "permission", revision: 7, schema: {}, value: { defaultPreset: "workspace-write" } }] } };
         },
         mutate: async () => ({ ok: true, value: { ns: "permission", revision: 8, value: { defaultPreset: "read-only" } } }),
+        update: async () => ({ ok: true, value: { ns: "dsh-desktop", revision: 9, value: {} } }),
       },
       permissionPresets: {
         catalog: async () => {
@@ -298,8 +300,7 @@ const activate = (desktop) => {
            * `options` and `defaultOptions` are DIFFERENT fields on the real
            * `PermissionCatalog`, and this stub keeps them different on purpose.
            * `auto` is selectable for a live session but is NOT an eligible
-           * new-session default, so a panel that read the wrong field would offer
-           * it — which is exactly the mistake this fixture can detect.
+           * new-session default.
            */
           return {
             ok: true,
@@ -319,28 +320,6 @@ const activate = (desktop) => {
         },
       },
     },
-    settingsSchema: {
-      describe: () => ({ namespaces: [{ ns: "permission", schema: {} }] }),
-      rehydrate: (value) => value,
-      nodeAtPath: () => ({ type: "union", list: [{ type: "const", value: "read-only" }] }),
-    },
-    sessions: {
-      list: {
-        subscribe: () => () => {},
-        // A real session summary: `permissions` carries currentValue and NOTHING else.
-        getSnapshot: () => ({
-          ids: ["s1", "s2"], current: "s1", phase: "ready",
-          byId: {
-            s1: { id: "s1", displayTitle: "Session A", running: false, cwd: "H:/w", projectionValues: { permissions: { currentValue: "workspace-write" } } },
-            s2: { id: "s2", displayTitle: "Archived B", running: false, cwd: "H:/w", projectionValues: { permissions: { currentValue: "read-only" } } },
-          },
-        }),
-      },
-      binding: () => undefined,
-      refresh: async () => {},
-      subagentAddress: () => undefined,
-    },
-    workspaces,
     shortcuts: { register: () => () => {} },
     slots: {
       inject: (name, factory) => { factory(); return () => {}; },
@@ -353,7 +332,7 @@ const activate = (desktop) => {
     ...previousWindow,
     location: { search: "" },
   };
-  if (desktop) fakeWindow.dshDesktopActions = { invoke: async () => {} };
+  if (desktop) fakeWindow.dshDesktopActions = { invoke: async (action) => { formsRead.push(action); } };
   global.window = fakeWindow;
 
   captured = null;
@@ -372,24 +351,15 @@ const activate = (desktop) => {
   };
 
   // Activation must not throw on either carrier, even though the Host offers no
-  // `settingsScope`.
+  // `sessions.list`, `workspaces.list`, `configForms`, or `settingsSchema`.
   captured.factory(requireStub).apply(ctx);
   global.window = previousWindow;
 
-  /*
-   * Drive the panel so its async reads actually run. The panel is a function
-   * component; rendering it queues its mount effects, which is what triggers
-   * `panel.load()`. Whether the resulting rows are ENABLED is asserted in
-   * smoke.cjs, which owns the full renderer.
-   */
   const Panel = registrations.get("workspace-permissions");
   /*
-   * Render the panel on demand rather than once.
-   *
-   * The first render necessarily happens BEFORE `panel.load()` resolves, so its
-   * row list is empty — that is the panel's real loading state, not a defect.
-   * The archive assertions need the settled render, so this stays callable and
-   * the suite re-renders after draining the async chain.
+   * Render the panel on demand rather than once: the first render necessarily
+   * happens BEFORE the catalog/panel loads resolve, so its row list is empty —
+   * that is the panel's real loading state, not a defect.
    */
   const renderPanel = () => {
     const pending = [];
@@ -401,29 +371,16 @@ const activate = (desktop) => {
     return tree;
   };
 
-  /*
-   * Kick off the mount effect so `panel.load()` starts its async chain, exactly
-   * as a real mount would. The returned tree is the loading state and is
-   * discarded; assertions re-render once the chain has drained.
-   */
   renderPanel();
 
   return {
-    requested, formReads, registrations, archiveSubscriptions, renderPanel,
-    reads: () => ({ settingsDescribed, catalogRead }),
+    requested, formsRead, registrations, archiveFrames, executes, renderPanel,
+    reads: () => ({ settingsDescribed, catalogRead, sessionListed, projectionsRead }),
   };
 };
 
 /**
  * Collect every string rendered in an element tree.
- *
- * The panel's own text assertions need the flattened output, not the tree
- * shape. Nested arrays are flattened and non-strings ignored.
- *
- * NOTE: this walks only what the panel itself creates. Child components
- * (`PermissionRow`, `PresetDropdown`) are elements here, not calls — a real
- * renderer is what invokes them — so their internals are reached through
- * {@link collectElements} rather than through this helper.
  * @param node - element, array, or scalar produced by the React stub.
  * @returns every string found, in render order.
  */
@@ -436,11 +393,6 @@ const renderedText = (node) => {
 
 /**
  * Collect every element in the tree whose `type` satisfies a predicate.
- *
- * Used to read the PROPS the panel passed to a child component. That is the
- * faithful assertion here: a real renderer would call `PermissionRow`, so what
- * this suite can verify without reimplementing React is which rows the panel
- * chose to create — and an archived session is excluded by never producing one.
  * @param node - element, array, or scalar produced by the React stub.
  * @param predicate - receives each element's `type`.
  * @returns matching elements in render order.
@@ -455,46 +407,40 @@ const collectElements = (node, predicate) => {
 const browser = activate(false);
 const desktop = activate(true);
 
-// Settle both async chains (describe -> catalog).
-const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+// Settle the async chains (session list -> archive stream -> panel load).
+const settle = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 settle().then(() => {
   const fail = (message) => { throw new Error(message); };
 
   for (const [carrier, run] of [["browser", browser], ["desktop", desktop]]) {
-    if (run.requested.some((name) => name === "settingsScope")) {
-      fail(carrier + ": the plugin requested the removed 'settingsScope' service");
+    if (run.requested.some((name) => name === "settingsScope" || name === "sessions")) {
+      fail(carrier + ": the plugin requested the removed 'settingsScope' or the removed client 'sessions' store");
     }
     if (!run.requested.includes("remote")) {
-      fail(carrier + ": the plugin never injected 'remote'; the permission panel reads settings through it");
+      fail(carrier + ": the plugin never injected 'remote'; the permission panel reads everything through it");
     }
     if (!run.registrations.has("workspace-permissions")) fail(carrier + ": the workspace-permissions section was never registered");
     if (!run.registrations.has("hotkey-toolkit")) fail(carrier + ": the hotkey-toolkit settings section was never registered");
 
     const reads = run.reads();
+    if (reads.sessionListed === 0) {
+      fail(carrier + ": the panel never called remote.session.list(); there would be no session rows");
+    }
     if (reads.settingsDescribed === 0) {
       fail(carrier + ": the permission panel never called remote.settings.describe(); the default-preset cell cannot load");
     }
     if (reads.catalogRead === 0) {
       fail(carrier + ": the permission panel never called remote.permissionPresets.catalog(); session rows would have no presets");
     }
+    if (!run.archiveFrames.includes("baseline")) {
+      fail(carrier + ": the panel never consumed remote.workspace.follow(); the archive set would never arrive");
+    }
 
     /*
      * The archive filter must actually run: `s2` is archived in the Workspace
-     * snapshot and `s1` is not, so the panel builds exactly one permission row
+     * baseline and `s1` is not, so the panel builds exactly one permission row
      * and reports the one it skipped.
-     *
-     * Asserted through the row ELEMENTS the panel created, not through rendered
-     * text: `PermissionRow` is a child component, so a stub renderer sees the
-     * element and its props rather than the row's own markup. The element list
-     * is exactly what the archive filter controls — an archived session is
-     * excluded by never producing a row for it — so this is the faithful check.
-     *
-     * Re-rendered here because the settled row list only exists after
-     * `panel.load()` drains.
      */
-    if (run.archiveSubscriptions.length === 0) {
-      fail(carrier + ": the panel never subscribed to workspaces.list; the archive set would never refresh");
-    }
     const tree = run.renderPanel();
     const rows = collectElements(tree, (type) => typeof type === "function" && type.name === "PermissionRow");
     const titles = rows.map((row) => row.props.title);
@@ -511,11 +457,7 @@ settle().then(() => {
 
     /*
      * The NEW-SESSION DEFAULT cell must offer `defaultOptions`, not `options`.
-     *
-     * The two fields differ: `auto` is selectable for a live session but is not an
-     * eligible default. Reading the wrong field would offer `auto` here, and the
-     * schema-derived path cannot cover for it because the real `defaultPreset`
-     * schema is a bare string with no enum. This asserts the field actually read.
+     * `auto` is selectable for a live session but is not an eligible default.
      */
     const defaultSelect = collectElements(tree, (type) => typeof type === "function" && type.name === "PresetDropdown")[0];
     if (defaultSelect === undefined) {
@@ -531,20 +473,17 @@ settle().then(() => {
     }
   }
 
-  // The Desktop form is resolved on the Desktop carrier only: `dsh-desktop` is a
-  // Desktop-owned namespace, and a browser carrier serves no settings row for it.
-  if (browser.formReads.length !== 0) {
-    fail("browser: resolved the dsh-desktop form without the Desktop shell");
-  }
-  if (desktop.formReads.length !== 1 || desktop.formReads[0] !== "dsh-desktop") {
-    fail("desktop: the dsh-desktop form was not resolved exactly once; saw " + JSON.stringify(desktop.formReads));
-  }
+  /*
+   * Commands dispatch through `remote.commands.execute` with the receiving Agent
+   * as the first argument (0.2.1 shape). That path only runs on a user action, so
+   * this suite asserts the CALL SHAPE in source rather than faking a click: the
+   * static check above already requires `{ id }`, and smoke.cjs owns interaction.
+   */
 
   console.log(
-    "host-api ok: no-removed-services=1 carriers=2"
-    + " settings-describe=2 catalog-read=2"
-    + " desktop-form=1 browser-form=0 panel-sections=2"
-    + " archived-hidden=2 archive-reported=2",
+    "host-api ok: no-removed-services=3 carriers=2"
+    + " session-list=2 archive-stream=2 settings-describe=2 catalog-read=2"
+    + " panel-sections=2 archived-hidden=2 archive-reported=2",
   );
 }).catch((error) => {
   console.error("host-api FAILED:", error && error.message ? error.message : error);

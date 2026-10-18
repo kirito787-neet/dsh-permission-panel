@@ -20,11 +20,12 @@ window.__ModuleLoader__.load({
 		const FALLBACK_PRESETS = ["read-only", "workspace-write", "danger-full-access"];
 		/** Default-preset options derived from the schema's own choices when available. */
 		let defaultPresetOptions = (current) => FALLBACK_PRESETS.map((value) => ({ id: value, label: value }));
-		/** Live sessions service binding + its list snapshot store (late-bound in apply). */
-		let sessionsStore = null;
-		let sessionsRef = null;
-		/** Live Workspace registry, for the archive set (late-bound in apply). */
-		let workspacesRef = null;
+		/** Generated Host Remote namespaces, late-bound in apply. */
+		let remoteRef = null;
+		/** Abort controller owning the Workspace archive stream (0.2.1 surface). */
+		let archiveAbort = null;
+		/** One catalog load at a time; later requests piggyback on it. */
+		let catalogLoading = false;
 		/** localStorage key holding the user's shortcut preferences. */
 		const STORAGE_KEY = "dsh.hotkeyToolkit.v1";
 		/** Electron preload bridge exposing argument-free Desktop actions. */
@@ -628,20 +629,31 @@ window.__ModuleLoader__.load({
 		 * and relaunches itself when mode/port/material move, so no explicit restart
 		 * call is needed here: writing the mode IS the restart trigger.
 		 *
-		 * `ConfigForm.set` resolves `true` only on Host acceptance; a refusal is not a
-		 * throw, so the result is checked rather than assumed. A silently-refused
+		 * NOTE ON THE API. DSH 0.1.7 replaced `ctx.settingsScope` with
+		 * `ctx.configForms`, and 0.2.1 then removed `configForms` as well: the
+		 * supported transport is the generated `remote.settings` namespace
+		 * (`update(ns, patch, expectedRevision)`). A silently missing form is why
+		 * mode switching looked "broken rather than absent"; the Remote call is the
+		 * one surface that is still composed here.
+		 *
+		 * A `false` return means the Host refused the write; a silently-refused
 		 * write would otherwise report "mode saved" while nothing changed.
-		 * @param form - the `dsh-desktop` config form, or null when unavailable.
+		 * @param target - captured `remote.settings` namespace, or null when unavailable.
 		 * @param mode - target mode.
 		 */
-		async function switchMode(form, mode) {
+		async function switchMode(target, mode) {
 			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
-			if (form === null || form === void 0) throw new Error(text("scopeUnavailable"));
+			if (target === null || target === void 0 || typeof target.update !== "function") throw new Error(text("scopeUnavailable"));
+			const write = async (patch) => {
+				const response = await target.update(DESKTOP_NS, patch, void 0);
+				if (response === null || typeof response !== "object" || response.ok !== true) {
+					throw new Error(text("scopeUnavailable"));
+				}
+			};
 			if (mode !== "compatibility") {
-				if (!await form.set("networkExposure", "loopback")) throw new Error(text("scopeUnavailable"));
-				if (!await form.set("openBrowser", false)) throw new Error(text("scopeUnavailable"));
+				await write({ networkExposure: "loopback", openBrowser: false });
 			}
-			if (!await form.set("mode", mode)) throw new Error(text("scopeUnavailable"));
+			await write({ mode });
 			notify(text("savedRestarting"));
 		}
 
@@ -671,39 +683,203 @@ window.__ModuleLoader__.load({
 			return key === void 0 ? titleCasePreset(value) : t(key);
 		}
 
+		/*
+		 * Session catalog — the 0.2.1-rc.2 data layer.
+		 *
+		 * 0.2.1 REMOVED the two client-side snapshots this panel used to read:
+		 * `sessions.list` (a list store on the Client sessions service) and
+		 * `workspaces.list` (the Workspace registry snapshot carrying
+		 * `archivedSessionIds`). Reading either one now yields `undefined`, and the
+		 * panel threw on `undefined.subscribe` the moment it mounted.
+		 *
+		 * The supported surfaces are the generated Remote namespaces:
+		 *
+		 *   - `remote.session.list({})` → `{ items: SessionSummary[] }`, where each
+		 *     summary already carries `projections.values` hints (permissions and
+		 *     title included) for sessions whose checkpoint has been read.
+		 *   - `remote.session.projections({ sessionId })` → exact values for one
+		 *     Session, the cold read that fills a row the list left without hints.
+		 *   - `remote.workspace.follow(signal)` → baseline plus increments; the
+		 *     baseline and `archived` frames carry `archivedSessionIds`.
+		 *
+		 * Rows are normalized into the small shape the panel already renders, so
+		 * the permission UI itself needed no rewrite.
+		 */
+		/** Observer set for catalog revisions (React useSyncExternalStore). */
+		const sessionCatalogListeners = new Set();
+		/** Normalized rows, the archive set, and the load state. */
+		const sessionCatalog = {
+			status: "idle",
+			error: null,
+			order: [],
+			byId: Object.create(null),
+			archived: [],
+			version: 0,
+			notify() {
+				this.version += 1;
+				for (const listener of sessionCatalogListeners) listener();
+			},
+		};
+
+		/** Read the current permission preset out of one projection values bag. */
+		function currentPresetOf(values) {
+			if (values === null || typeof values !== "object") return null;
+			const permission = values.permissions;
+			/* Both shapes have existed: a bare string and `{ currentValue }`. */
+			if (typeof permission === "string") return permission;
+			if (permission !== null && typeof permission === "object" && typeof permission.currentValue === "string") return permission.currentValue;
+			return null;
+		}
+
+		/** Read a session title out of its projections, falling back to the id. */
+		function titleOf(values, fallback) {
+			if (values !== null && typeof values === "object" && typeof values.title === "string" && values.title !== "") return values.title;
+			return fallback;
+		}
+
+		/** Fold one `remote.session.list` answer into the catalog. */
+		function adoptSessionItems(items) {
+			const order = [];
+			const byId = Object.create(null);
+			for (const item of items) {
+				if (item === null || typeof item !== "object" || typeof item.sessionId !== "string") continue;
+				const hints = item.projections;
+				const values = hints !== null && hints !== void 0 && hints.values !== void 0 ? hints.values : void 0;
+				order.push(item.sessionId);
+				byId[item.sessionId] = {
+					id: item.sessionId,
+					parentId: item.parentSessionId,
+					title: titleOf(values, item.sessionId),
+					cwd: item.cwd,
+					running: item.running === true,
+					preset: currentPresetOf(values),
+				};
+			}
+			sessionCatalog.order = order;
+			sessionCatalog.byId = byId;
+			sessionCatalog.status = "ready";
+			sessionCatalog.error = null;
+			sessionCatalog.notify();
+		}
+
 		/**
-		 * Subscribe React to the sessions list snapshot (useSyncExternalStore:
-		 * plain subscribe + getSnapshot on the controller's snapshot store).
+		 * Load the visible Session rows, then subscribe to the archive stream.
+		 *
+		 * Failure is reported on the panel rather than thrown: a Host without the
+		 * Remote namespaces must degrade to "unavailable", not take the settings
+		 * page down with it.
+		 */
+		async function loadSessionCatalog() {
+			const namespaces = remoteRef;
+			if (namespaces === null || namespaces.session === void 0 || typeof namespaces.session.list !== "function") {
+				sessionCatalog.status = "unavailable";
+				sessionCatalog.error = null;
+				sessionCatalog.notify();
+				return;
+			}
+			if (catalogLoading) return;
+			catalogLoading = true;
+			if (sessionCatalog.status !== "ready") {
+				sessionCatalog.status = "loading";
+				sessionCatalog.notify();
+			}
+			try {
+				const response = await namespaces.session.list({}, void 0);
+				const value = response !== null && typeof response === "object" && response.ok === true ? response.value : null;
+				if (value === null) throw new Error(describe(response !== null && typeof response === "object" ? response.error : response));
+				adoptSessionItems(Array.isArray(value.items) ? value.items : []);
+				await followArchiveSet();
+			} catch (cause) {
+				sessionCatalog.status = "error";
+				sessionCatalog.error = describe(cause);
+				sessionCatalog.notify();
+			} finally {
+				catalogLoading = false;
+			}
+		}
+
+		/**
+		 * Consume `remote.workspace.follow` for the archive set.
+		 *
+		 * Fail-open on purpose: an unreadable archive state must never hide rows
+		 * the user can still act on. A row that turns out to be archived is a
+		 * harmless no-op — the Host refuses the command and the panel says so.
+		 */
+		async function followArchiveSet() {
+			const namespaces = remoteRef;
+			if (namespaces === null || namespaces.workspace === void 0 || typeof namespaces.workspace.follow !== "function") return;
+			if (archiveAbort !== null) return;
+			const controller = new AbortController();
+			archiveAbort = controller;
+			const adopt = (ids) => {
+				sessionCatalog.archived = Array.isArray(ids) ? ids : [];
+				sessionCatalog.notify();
+			};
+			try {
+				for await (const frame of namespaces.workspace.follow(controller.signal)) {
+					if (frame === null || typeof frame !== "object") continue;
+					if (frame.type === "baseline" || frame.type === "replace") {
+						adopt(frame.value !== void 0 && frame.value !== null ? frame.value.archivedSessionIds : void 0);
+					} else if (frame.type === "archived") {
+						adopt(frame.archivedSessionIds);
+					}
+				}
+			} catch {
+				/* Aborted on dispose, or the carrier does not stream: keep empty. */
+			} finally {
+				if (archiveAbort === controller) archiveAbort = null;
+			}
+		}
+
+		/**
+		 * Subscribe React to the session catalog, exposed in the legacy shape the
+		 * permission rows already consume (`ids`, `byId`, `current`).
 		 */
 		function useSessions() {
-			return React.useSyncExternalStore(
-				(listener) => sessionsStore.subscribe(listener),
-				() => sessionsStore.getSnapshot(),
+			const version = React.useSyncExternalStore(
+				(listener) => {
+					sessionCatalogListeners.add(listener);
+					return () => {
+						sessionCatalogListeners.delete(listener);
+					};
+				},
+				() => sessionCatalog.version,
 			);
+			return React.useMemo(() => {
+				void version;
+				const byId = Object.create(null);
+				for (const id of sessionCatalog.order) {
+					const row = sessionCatalog.byId[id];
+					if (row === void 0) continue;
+					byId[id] = {
+						id,
+						parentId: row.parentId,
+						displayTitle: row.title,
+						cwd: row.cwd,
+						running: row.running,
+						projectionValues: row.preset === null ? void 0 : { permissions: { currentValue: row.preset } },
+					};
+				}
+				return { ids: sessionCatalog.order, current: null, byId };
+			}, [version]);
 		}
 
 		/**
 		 * Ask the Host for one session's projections, without opening it.
 		 *
-		 * WHY THIS EXISTS. The panel lists EVERY session, but a session the user has
-		 * never opened carries no `permissions` projection: `sessions.list` fills
-		 * `projectionValues` only from what the Host has already pushed (the live
-		 * control baseline, or list hints from the persisted checkpoint). A row whose
-		 * projection is absent cannot know its current preset, so `current` is null
-		 * and the row renders as "unavailable" — which is exactly the "some sessions
-		 * still show unavailable" half of the report.
+		 * WHY THIS EXISTS. `remote.session.list` returns projection HINTS: rows whose
+		 * persisted checkpoint has been read carry values, rows that never were read
+		 * since this generation started may not. A row without them cannot know its
+		 * current preset, so `current` is null and the row renders as "unavailable".
 		 *
-		 * `refreshProjections(id)` is the supported cold read: it goes through
-		 * `remote.session.projections`, which is answered by a Host-side
-		 * `observeSession` that never activates an Agent. That is the whole point —
-		 * reading a preset must not be as expensive as opening the conversation, and
-		 * must not depend on the user having visited the session.
+		 * `remote.session.projections({ sessionId })` is the supported cold read,
+		 * answered by a Host-side observation that never activates an Agent — reading
+		 * a preset must not be as expensive as opening the conversation, and must not
+		 * depend on the user having visited the session.
 		 *
 		 * Deliberately NOT `retain()`: retaining materializes a client scope and
-		 * starts the session's history `open()`, so doing it for every row would open
-		 * every conversation in the sidebar. Projections are the cheap, purpose-built
-		 * read for exactly this "show me metadata about sessions I have not opened"
-		 * case.
+		 * starts the session's history, so doing it for every row would open every
+		 * conversation in the sidebar.
 		 *
 		 * Failures are swallowed on purpose: a session whose projection cannot be read
 		 * keeps its row, disabled, and the panel's own refresh can retry. Throwing here
@@ -711,29 +887,35 @@ window.__ModuleLoader__.load({
 		 * @param id - session to read projections for.
 		 */
 		function ensureProjections(id) {
-			if (sessionsRef === null || typeof sessionsRef.refreshProjections !== "function") return;
-			Promise.resolve(sessionsRef.refreshProjections(id)).catch(() => {});
+			const namespaces = remoteRef;
+			if (namespaces === null || namespaces.session === void 0 || typeof namespaces.session.projections !== "function") return;
+			const entry = sessionCatalog.byId[id];
+			/* A row that already knows its preset needs no read (and this runs per render). */
+			if (entry === void 0 || entry.preset !== null) return;
+			Promise.resolve(namespaces.session.projections({ sessionId: id }, void 0)).then((response) => {
+				const value = response !== null && typeof response === "object" && response.ok === true ? response.value : null;
+				if (value === null || typeof value !== "object") return;
+				const values = value.values !== void 0 ? value.values : void 0;
+				const preset = currentPresetOf(values);
+				const title = titleOf(values, entry.title);
+				if (preset === entry.preset && title === entry.title) return;
+				entry.preset = preset;
+				entry.title = title;
+				sessionCatalog.notify();
+			}).catch(() => {});
 		}
 
 		/**
 		 * Dispatch one slash command to a session BY ID, without materializing it.
 		 *
-		 * WHY NOT `binding()`. This used to be
-		 * `sessionsRef.binding(id)?.session` then `session.command(line)`, which threw
-		 * the reported "该会话暂时无法下发指令（尚未装载）" for every session the user had
-		 * not opened. `binding(id)` only returns a binding for a scope that already
-		 * exists — it never creates one; `retain()` is what materializes. So the panel
-		 * could only ever drive the handful of sessions that happened to be open.
+		 * `remote.commands.execute` is the same surface the official ui-plan chip
+		 * uses. The Host resolves the receiving Agent on demand (resuming a cold
+		 * session), so an unopened session is a perfectly valid target and no
+		 * client-side scope, history open, or retention is involved.
 		 *
-		 * `remote.commands.execute(sessionId, line, [])` is the same surface the
-		 * official ui-plan chip uses, and it takes the id directly. The Host resolves
-		 * it through `resolveAgent(sessionId)`, which RESUMES a cold session on demand
-		 * — so an unopened session is a perfectly valid target, and no client-side
-		 * scope, history open, or retention is involved.
-		 *
-		 * Falls back to the binding when the remote namespace is unavailable, so a
-		 * carrier that composes sessions without `remote.commands` keeps whatever
-		 * range it had rather than losing the feature entirely.
+		 * 0.2.1 changed the first argument from the bare Session id to the receiving
+		 * Agent (`{ id }`). Both shapes are attempted so the panel keeps working on
+		 * either carrier generation.
 		 * @param remoteCommands - the `remote.commands` namespace, or undefined.
 		 * @param id - target session.
 		 * @param line - full command line, leading slash included.
@@ -741,30 +923,27 @@ window.__ModuleLoader__.load({
 		 */
 		async function dispatchCommand(remoteCommands, id, line) {
 			if (remoteCommands !== void 0 && remoteCommands !== null && typeof remoteCommands.execute === "function") {
-				try {
-					const result = await remoteCommands.execute(id, line, []);
-					if (!result.ok) {
-						return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
+				/*
+				 * 0.2.1 types the first argument as the receiving Agent (`{ id }`);
+				 * 0.1.x took the bare Session id. Try the current shape first and
+				 * keep the old call as a fallback so a carrier on either generation
+				 * still dispatches.
+				 */
+				for (const target of [{ id }, id]) {
+					try {
+						const result = await remoteCommands.execute(target, line, [], void 0);
+						if (!result.ok) {
+							return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
+						}
+						if (result.value === void 0) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
+						return { ok: true };
+					} catch (cause) {
+						if (target !== id) continue;
+						return { ok: false, message: describe(cause) };
 					}
-					if (result.value === void 0) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
-					return { ok: true };
-				} catch (cause) {
-					return { ok: false, message: describe(cause) };
 				}
 			}
-			try {
-				const binding = sessionsRef !== null ? sessionsRef.binding(id) : void 0;
-				const session = binding !== void 0 && binding !== null ? binding.session : void 0;
-				if (session === void 0 || typeof session.command !== "function") return { ok: false, message: text("wpSessionUnreachable") };
-				const result = await session.command(line);
-				if (!result.ok) {
-					return { ok: false, message: result.error && result.error.message ? result.error.message : String(result.error) };
-				}
-				if (!result.value.matched) return { ok: false, message: "the host offers no " + line.split(" ")[0] + " command" };
-				return { ok: true };
-			} catch (cause) {
-				return { ok: false, message: describe(cause) };
-			}
+			return { ok: false, message: text("wpSessionUnreachable") };
 		}
 
 		/**
@@ -777,14 +956,16 @@ window.__ModuleLoader__.load({
 		 * hiding an active row would silently remove a control the user needs.
 		 */
 		function useArchivedIds() {
-			const snapshot = React.useSyncExternalStore(
-				(listener) => (workspacesRef === null ? () => {} : workspacesRef.list.subscribe(listener)),
-				() => (workspacesRef === null ? null : workspacesRef.list.getSnapshot()),
+			const version = React.useSyncExternalStore(
+				(listener) => {
+					sessionCatalogListeners.add(listener);
+					return () => {
+						sessionCatalogListeners.delete(listener);
+					};
+				},
+				() => sessionCatalog.version,
 			);
-			const ids = snapshot !== null && snapshot !== void 0 && Array.isArray(snapshot.archivedSessionIds)
-				? snapshot.archivedSessionIds
-				: [];
-			return React.useMemo(() => new Set(ids), [snapshot]);
+			return React.useMemo(() => new Set(sessionCatalog.archived), [version]);
 		}
 
 		/**
@@ -894,35 +1075,35 @@ window.__ModuleLoader__.load({
 		 * every read threw. The failure was swallowed into the panel's own error state,
 		 * which rendered as the generic "unavailable" the user saw.
 		 *
-		 * `remote.commands` is the transport the permissions panel dispatches
-		 * `/permission` through, and `remote.permissionPresets` supplies the preset
-		 * catalog. `remote.session` used to be listed here because the model seat's
-		 * `modelDirectories.directoryFor()` resolved `this.ctx.remote.session`
-		 * through THIS fiber; that seat now lives in another plugin, so the entry is
-		 * gone with it — an unused hard gate is a plugin that can hang on a service
-		 * it never reads.
+		 * 0.2.1 gating, per namespace:
+		 *   - `remote.session` — the permissions panel's Session catalog
+		 *     (`list`/`projections`) and its per-Session live view.
+		 *   - `remote.commands` — the `/permission` dispatch transport.
+		 *   - `remote.settings` — the new-session default preset read/write.
+		 *   - `remote.permissionPresets` — the selectable preset catalog.
 		 *
-		 * `workspaces` and `shortcuts` are deliberately NOT listed here. Both are
-		 * injected lazily via `ctx.inject([...], ...)` inside `apply`, so a carrier
-		 * without them still gets the settings page and the permissions panel
-		 * instead of the whole plugin waiting forever for a service that never
-		 * arrives.
+		 * `remote.session` moved back INTO this array in 0.2.1: the Client sessions
+		 * service lost its list snapshot, so the panel now reads the Remote instead,
+		 * and a hard gate is what makes a missing namespace visible rather than an
+		 * empty panel. `workspaces` and `shortcuts` remain lazily injected via
+		 * `ctx.inject([...], ...)` inside `apply`: a carrier without them still gets
+		 * the settings page and the permissions panel instead of the whole plugin
+		 * waiting forever for a service that never arrives.
 		 *
 		 * The difference between the two gates is not cosmetic. A name in THIS array
 		 * is a hard requirement: cordis leaves the plugin PENDING forever when it is
 		 * missing. A nested `ctx.inject` is a soft one: the callback simply never
-		 * runs, and the feature that depends on it degrades. `workspaces` is
-		 * genuinely optional here — the archive set only REFINES the permissions
-		 * panel, and `useArchivedIds()` already fails open to an empty set — so it
-		 * must not be able to take the whole plugin down with it.
+		 * runs, and the feature that depends on it degrades. The archive set only
+		 * REFINES the permissions panel, and `useArchivedIds()` already fails open to
+		 * an empty set — so it must not be able to take the whole plugin down with it.
 		 */
 		const inject = [
 			"locale",
 			"remote",
 			"remote.commands",
+			"remote.session",
 			"remote.settings",
 			"remote.permissionPresets",
-			"sessions",
 			"slots",
 		];
 
@@ -938,60 +1119,33 @@ window.__ModuleLoader__.load({
 			translate = ctx.locale.bind(NS);
 
 			/*
-			 * The Desktop settings form is resolved ONCE here so its disposer belongs to
-			 * this plugin's fiber; resolving per keystroke would leak a form on every
-			 * shortcut.
+			 * The Desktop window-mode form is NO LONGER resolved here.
 			 *
-			 * Resolved only when the Desktop shell is carrying this page: `dsh-desktop`
-			 * is a Desktop-owned namespace, and a browser carrier serves no settings row
-			 * for it. `switchMode` refuses without a form, so the failure stays local to
-			 * the Desktop-only action instead of breaking activation.
-			 *
-			 * NOTE ON THE API. DSH 0.1.7 removed `ctx.settingsScope` outright — there is
-			 * no compatibility shim, and a nested `ctx.inject(['settingsScope'], …)`
-			 * does not fail activation, it simply NEVER FIRES. That is a silent
-			 * failure: the panel renders, every callback is wired to `null`, and the
-			 * feature looks broken rather than absent. The supported surface is
-			 * `ctx.configForms.get(entryId)`, so that is what is used here.
+			 * DSH 0.1.7 removed `ctx.settingsScope`; 0.2.1 removed the `configForms`
+			 * replacement as well, so `ctx.inject(['configForms'], …)` never fires and
+			 * a form object is not obtainable. Mode switching therefore rides
+			 * `remote.settings.update(DESKTOP_NS, patch)` (see switchMode), which is
+			 * the surface 0.2.1 actually composes.
 			 */
-			let modeForm = null;
-			if (hasDesktopHost()) {
-				ctx.inject(["configForms"], (scope) => {
-					try {
-						modeForm = scope.configForms.get(DESKTOP_NS);
-					} catch (cause) {
-						reportPanelFailure("configForms.get(" + DESKTOP_NS + ")", cause);
-					}
-				});
-			}
 
 			/*
-			 * The sessions service (list snapshot store + session verbs), bound once so
-			 * its lifetime belongs to this plugin's fiber. The permissions panel reads
-			 * the list snapshot for every session's permission projection and issues
-			 * /permission commands through each session's binding.
+			 * The Remote namespaces, bound once so their lifetime belongs to this
+			 * plugin's fiber. 0.2.1 has no client-side Session list store: the panel
+			 * enumerates rows through `remote.session.list` and the archive set
+			 * through `remote.workspace.follow` (see loadSessionCatalog).
 			 */
-			ctx.inject(["sessions"], (scope) => {
-				sessionsStore = scope.sessions.list;
-				sessionsRef = scope.sessions;
+			ctx.inject(["remote"], (scope) => {
+				remoteRef = scope.remote;
+				loadSessionCatalog().catch(() => {});
 			});
 
-			/*
-			 * The Workspace registry, for the archive set.
-			 *
-			 * Archiving is the user saying "this session is done". An archived session
-			 * runs no model step (the Host's own archived-session gate refuses them), so
-			 * offering a permission switch for it would be a control that cannot do
-			 * anything — the /permission command has no effect on work that never runs.
-			 * The panel therefore lists active sessions only and reports how many were
-			 * skipped, rather than silently hiding them.
-			 *
-			 * Bound here rather than read per render so the snapshot subscription belongs
-			 * to this plugin's fiber.
-			 */
-			ctx.inject(["workspaces"], (scope) => {
-				workspacesRef = scope.workspaces;
-			});
+			/* Abort the archive stream when this plugin's fiber goes away. */
+			ctx.effect(() => () => {
+				if (archiveAbort !== null) {
+					archiveAbort.abort();
+					archiveAbort = null;
+				}
+			}, "hotkey-toolkit: session catalog");
 
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
@@ -1136,13 +1290,15 @@ window.__ModuleLoader__.load({
 							/* Already in this mode: nothing to do, but do not consume the key. */
 							if (currentMode() === mode) return { status: "pass" };
 							/*
-							 * The form is resolved lazily and may be absent when the Desktop
-							 * settings surface is unavailable; report rather than throw.
+							 * The transport is captured from the Remote namespace and may be
+							 * absent when the Desktop settings surface is unavailable; report
+							 * rather than throw.
 							 */
-							if (modeForm === null || modeForm === void 0) return { status: "blocked", reason: text("scopeUnavailable") };
-							const form = modeForm;
+							const scope = permissionPanel.settingsCtx;
+							const target = scope === null ? null : scope.remote.settings;
+							if (target === null || target === void 0) return { status: "blocked", reason: text("scopeUnavailable") };
 							return { status: "handled", run: () => {
-								switchMode(form, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
+								switchMode(target, mode).catch((cause) => notify(text("modeFailed") + describe(cause)));
 							} };
 						},
 					});
@@ -1383,11 +1539,12 @@ window.__ModuleLoader__.load({
 		/*
 		 * Optional schema fallback for the default-preset choices.
 		 *
-		 * The real `defaultPreset` schema is `z.string().volatile()` — no enum — so
-		 * this usually yields nothing beyond the current value. It is kept because a
-		 * deployment MAY constrain the field to a union of consts, in which case the
-		 * schema is a better answer than a hardcoded list. Absent the service, the
-		 * plugin simply keeps its built-in fallback.
+		 * 0.2.1 no longer composes a client-side `settingsSchema` service, so this
+		 * callback never fires there and the built-in fallback stays in charge. It
+		 * is kept because an older or differently composed carrier may still offer
+		 * the service, and a deployment that constrains `defaultPreset` to a union
+		 * of consts would then get a better answer than a hardcoded list. Absent the
+		 * service, nothing breaks: the catalog Remote supplies the real options.
 		 */
 		ctx.inject(["settingsSchema"], (scope) => {
 			const schema = scope.settingsSchema;
@@ -1922,7 +2079,8 @@ window.__ModuleLoader__.load({
 							className: "dshk-btn",
 							key: "btn",
 							onClick: () => {
-								if (sessionsRef !== null) sessionsRef.refresh().catch(() => {});
+								/* 0.2.1 has no client list store to refresh: re-read the Remote. */
+								loadSessionCatalog().catch(() => {});
 							},
 						}, t("wpRefresh")),
 					]),

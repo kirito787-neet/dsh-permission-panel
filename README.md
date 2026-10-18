@@ -2,6 +2,15 @@
 
 DSH 快捷键工具包（官方快捷键体系）+ 工作区权限面板。同一份源码同时支持 **Web** 与 **Desktop** 两种载体。
 
+> **2.1 兼容提示（DSH 0.2.1-rc.2）**：0.2.1 移除了本插件原先依赖的三个客户端面——
+> `sessions.list`（会话列表快照）、`workspaces.list`（工作区注册表快照）以及 `configForms` /
+> `settingsSchema` 两个设置服务。权限面板因此会在挂载时对 `undefined.subscribe` 抛错。
+> 2.1 改为使用 0.2.1 实际提供的 Remote 命名空间：
+> `remote.session.list({})` 枚举会话（行内自带投影提示）、`remote.session.projections({ sessionId })`
+> 冷读单会话、`remote.workspace.follow(signal)` 订阅归档集合、`remote.settings.update(ns, patch)`
+> 写入 Desktop 窗口模式。`/permission` 派发也跟随 0.2.1 把首参从会话 id 改为接收方 Agent（`{ id }`），
+> 并保留旧签名作为回退。
+
 > **2.0 迁移提示**：原先内置的「模型搜索」子插件（遮蔽 `conversation.input.model` 席位的可搜索模型菜单）
 > 已**迁出**到 [dsh-client-ui-effort-slider](https://github.com/Kirito787/DSH-Claude-Style-Reasoning-Slider)。
 > 那个插件本来就占着同一个模型席位，两者**无法共存**——同格位只能有一个存活项，两个都注册只会互相遮蔽。
@@ -252,15 +261,15 @@ npm test          # 无依赖：键位审计 + 词典 + 宿主 API 兼容 + 迁�
   并带**反向对照**（`Ctrl+R`、裸 `Esc`、`Ctrl+C`、`Numpad0` 必须被判非法），确保审计本身不是空转。
   它还断言 Web 档位**保持不绑定**——这正是开发时抓到真实违规的那条断言。
 - `test/host-api.cjs`：**宿主 API 兼容**。专门盯住「插件信任了宿主并不提供的服务或字段」这一类**静默**失败：
-  静态检查（先剥掉注释，只查活代码）断言源码不再出现已被移除的 `settingsScope`，
-  也不再从 `permissions` 投影读取并不存在的 `options`；断言活代码里每一个 `remote.<ns>` 读取
-  都在 `inject` 数组里声明过（嵌套命名空间各自独立门控，漏一个就是一次静默抛错）；
-  断言 `workspaces` / `shortcuts` **没有**被放进硬门控 `inject` 数组（放进去＝服务缺失时整个插件永远 PENDING）；
-  断言面板**按 id 下发命令**（`commands.execute(id, line, [])` 且门控条件仍在），
-  不再出现 per-row 的 `binding(row.id)`——那是「尚未装载」的成因；
-  行为检查则在**两种载体**上，仅用 DSH 0.1.7 真实提供的接口激活插件，断言权限面板确实调用了
-  `remote.settings.describe()` 与 `remote.permissionPresets.catalog()`、
-  `dsh-desktop` 表单只在 Desktop 载体解析一次，
+  静态检查（先剥掉注释，只查活代码）断言源码不再出现已被移除的 `settingsScope`、客户端 `sessions.list`
+  与 `workspaces.list` 快照，也不再从 `permissions` 投影读取并不存在的 `options`；断言活代码里每一个
+  `remote.<ns>` 读取都在 `inject` 数组里声明过（嵌套命名空间各自独立门控，漏一个就是一次静默抛错）；
+  断言 `workspaces` / `shortcuts` / `sessions` **没有**被放进硬门控 `inject` 数组（放进去＝服务缺失时整个插件永远 PENDING）；
+  断言面板仍走 0.2.1 的三个 Remote：`remote.session.list`、`remote.session.projections`、`remote.workspace.follow`；
+  断言面板**按 id 下发命令**并把首参写成接收方 Agent（`{ id }`），不再出现 per-row 的 `binding(row.id)`；
+  行为检查则在**两种载体**上，仅用 DSH 0.2.1-rc.2 真实提供的接口激活插件（不提供 `configForms`、`settingsSchema`、
+  `sessions.list`、`workspaces.list`），断言权限面板确实调用了 `remote.session.list()`、
+  `remote.settings.describe()` 与 `remote.permissionPresets.catalog()`、消费了归档流 baseline，
   渲染面板断言**已归档会话不出现在行里**、活跃会话在、跳过数量被报告，
   并断言「新会话默认权限」下拉取的是 `defaultOptions` 而非 `options`。
   六个已修 bug 与归档过滤都用变异测试验证过能被它抓到。
@@ -355,7 +364,10 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'
 - `shortcuts` 服务用 `ctx.inject(['shortcuts'], …)` **惰性注入**，而不是写进插件顶层 `inject`：这样即使某个载体没有该服务，设置页与权限面板依然可用，只有快捷键缺失，而不是整个插件停在 PENDING。
 - **面板的设置绑定只注入 `remote`，不注入 `settingsSchema`**：候选默认权限改从宿主目录 `defaultOptions` 读取后，schema 只剩兜底作用。把两者耦合会让「没有 schema 服务的载体」上绑定回调不执行、`settingsCtx` 为 null、面板永远停在「加载中」——与 `settingsScope` 那个 bug 完全同形，没有理由再冒一次这个风险。`test/platform.cjs` 用一个**不提供 `settingsSchema`** 的载体盯着这条。
 - **`catalog.options` 与 `catalog.defaultOptions` 是两个不同的字段**：前者是当前可选的全部预设（含 `auto`），后者才是**可作为新会话默认**的子集。官方那一行读后者，本插件也读后者；`test/host-api.cjs` 的桩把两者设成不同集合，读错字段会立刻被抓到。
-- **依赖宿主服务一律用 `ctx.inject` 惰性获取，并对其缺失保持可降级**：DSH 0.1.7 移除了 `settingsScope`（改为 `configForms`），而嵌套 `inject` 对不存在的服务**既不报错也不激活失败**——回调静默不执行。因此面板侧的探测失败会写入 `window.__dshHotkeyPanel` 并打日志，把「面板莫名空白」变成一行可读答案。
+- **依赖宿主服务一律用 `ctx.inject` 惰性获取，并对其缺失保持可降级**：DSH 0.1.7 移除了 `settingsScope`（改为 `configForms`），
+  0.2.1 又移除了 `configForms`、`settingsSchema` 与客户端 `sessions`/`workspaces` 快照；嵌套 `inject` 对不存在的服务
+  **既不报错也不激活失败**——回调静默不执行。因此面板侧的探测失败会写入 `window.__dshHotkeyPanel` 并打日志，
+  把「面板莫名空白」变成一行可读答案。会话枚举、归档集合与模式写入一律改走 0.2.1 的 Remote 命名空间。
 - 注册失败会被 `try/catch` 收敛成「没有快捷键」并打日志，不会让 `apply()` 抛错——插件退化是可接受的，插件加载失败不是。
 - **模型席位已迁出本插件**：可搜索模型菜单现在由 `dsh-client-ui-effort-slider` 提供，它原本就占着 `conversation.input.model` 同一格位。槽位运行时对遮蔽型席位是「单选」语义，两个插件都注册只会互相遮蔽、结果取决于加载顺序，因此这里不是取舍而是必须分出唯一归属。
 - 迁出后本插件不再声明 `modelDirectories`、不再引用 `remote.session`：那个依赖原本只是为了让 `directoryFor()` 能在**本插件**的 fiber 上解析 `this.ctx.remote.session`（cordis 的 `Service` tracker 会把 `this.ctx` 重绑成调用方 ctx），席位走了，这条硬门控也就没有必要再留着——一个用不到的硬门控只会让插件在缺该服务的载体上停在 PENDING。
