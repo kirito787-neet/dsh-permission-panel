@@ -864,6 +864,98 @@ const openDropdown = (index) => {
     settingsView.writable = true;
   }
 
+  // ---- case 16: the Session header button opens the panel in place ----
+  /*
+   * Reaching this panel used to require Settings → Plugins → 工作区权限 on every
+   * single visit. The header now carries one button that opens the same panel
+   * over the current Session, so the entry point stops being a three-step
+   * digression.
+   *
+   * Rendered through the registered slot component itself rather than through
+   * the settings page: this is a DIFFERENT registration (its own id, in the
+   * conversation header rather than 'settings.section'), and the assertion that
+   * matters is that the portalled panel is reachable from it.
+   */
+  const HeaderButton = registrations.get("dsh-permission-panel-button");
+  if (HeaderButton === undefined) {
+    throw new Error("case 16: the Session header never registered a permission-panel button");
+  }
+  /*
+   * Measured RELATIVE to this baseline, not against zero: earlier cases open and
+   * close the confirmation gate, and this harness never runs effect cleanups, so
+   * their Escape listeners are still in the log. What this case can prove is
+   * that the header button itself adds none.
+   */
+  const keydownBeforeHeader = keydownListeners.length;
+  /*
+   * The header entry keeps its own hook state across re-renders (open/closed), so
+   * this case gets the same owner-reset discipline `renderOnce` applies — with
+   * one deviation: `hookSlots` is wiped only on the FIRST pass. Wiping it on the
+   * click's re-render would silently discard the `open` state the click just
+   * wrote, and the portal assertion would fail for the wrong reason.
+   */
+  let firstHeaderPass = true;
+  const renderHeader = () => {
+    // Wipe stale slots from earlier cases so the mounted panel starts clean
+    // (a leftover hook value could resurrect e.g. an open confirmation gate).
+    if (firstHeaderPass) { hookSlots.clear(); firstHeaderPass = false; }
+    dropdownOwners.length = 0;
+    ownerCounter = 0;
+    hookOwner = "c" + (++ownerCounter);
+    hookSlot = 0;
+    const tree = renderNode(HeaderButton({ t: translate, sessionId: "s1" }));
+    for (const effect of pendingEffects.splice(0, pendingEffects.length)) {
+      const cleanup = effect();
+      if (typeof cleanup === "function") cleanups.push(cleanup);
+    }
+    return tree;
+  };
+  let headerTree = renderHeader();
+  const openButton = collect(headerTree, (entry) => entry.props?.className?.includes("dshk-wpEntry"))[0];
+  if (openButton === undefined) {
+    throw new Error("case 16: the header button rendered no entry control; saw " + explain(headerTree));
+  }
+  if (openButton.props.disabled === true) {
+    throw new Error("case 16: the header button is disabled, so the panel is unreachable");
+  }
+  /*
+   * `portalCalls` is the only channel this harness has for "something reached
+   * document.body": `createPortal` records its container and drops the children.
+   * Recording the baseline here proves the panel mounted BECAUSE of the click,
+   * not as a side effect of some earlier case.
+   */
+  const portalsBeforeClick = portalCalls.length;
+  openButton.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  headerTree = renderHeader();
+  if (portalCalls.length <= portalsBeforeClick) {
+    throw new Error("case 16: clicking the header button opened nothing on document.body");
+  }
+  if (portalCalls[portalCalls.length - 1] !== fakeBody) {
+    throw new Error("case 16: the panel portal landed on something other than document.body");
+  }
+  /*
+   * A panel that opens and cannot close traps the user in it. Closed through the
+   * same portalled surface it opened through.
+   */
+  const closeControl = collect(headerTree, (entry) => entry.props?.className?.includes("dshk-wpClose"))[0];
+  if (closeControl === undefined) {
+    throw new Error("case 16: the opened panel offers no way to close it");
+  }
+  const portalsBeforeClose = portalCalls.length;
+  closeControl.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  headerTree = renderHeader();
+  if (portalCalls.length !== portalsBeforeClose) {
+    throw new Error("case 16: closing the panel re-opened it; the overlay never went away");
+  }
+  /*
+   * The header lives on EVERY Session, so an unguarded render would install a
+   * document listener per frame. `platform.cjs` asserts no global keydown
+   * listener exists at load; this asserts the closed state adds none either.
+   */
+  if (keydownListeners.length !== keydownBeforeHeader) {
+    throw new Error("case 16: the closed header button added " + (keydownListeners.length - keydownBeforeHeader) + " keydown listener(s)");
+  }
+
   console.log(
     "smoke ok: portals=" + portalCalls.length +
     " commands=" + JSON.stringify(reportedCommands) +

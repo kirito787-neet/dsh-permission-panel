@@ -65,6 +65,9 @@ window.__ModuleLoader__.load({
 			webCarrierNote: "当前运行在浏览器（Web）载体中：重启 DSH 仅在 DSH Desktop 中可用，因此在官方快捷键列表里默认不绑定。",
 			wpNav: "工作区权限",
 			wpIntro: "查看并调整每个会话的工作区权限（沙盒模式 + 审批策略），并可设置新会话的默认权限；改动即时生效。",
+			wpEntryButton: "权限",
+			wpEntryTip: "打开工作区权限面板",
+			wpEntryClose: "关闭面板",
 			wpSessionSection: "会话权限",
 			wpDefaultSection: "新会话默认权限",
 			wpDefaultHint: "仅对之后新建的会话生效，已有会话不受影响。",
@@ -129,6 +132,9 @@ window.__ModuleLoader__.load({
 			webCarrierNote: "Running on the browser (Web) carrier: Restart DSH exists only in DSH Desktop, so it ships unbound in the official shortcut list.",
 			wpNav: "Workspace Permissions",
 			wpIntro: "View and adjust each session's workspace permissions (sandbox mode + approval policy), plus the default for new sessions. Changes apply immediately.",
+			wpEntryButton: "Permissions",
+			wpEntryTip: "Open the workspace permissions panel",
+			wpEntryClose: "Close panel",
 			wpSessionSection: "Session permissions",
 			wpDefaultSection: "Default permission for new sessions",
 			wpDefaultHint: "Applies to sessions created afterwards only; existing sessions keep their permissions.",
@@ -228,6 +234,12 @@ window.__ModuleLoader__.load({
 		".dshk-wpItemLabel{font-size:13px;line-height:18px}",
 		".dshk-wpItemDesc{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:11px;line-height:15px;margin-top:1px}",
 		".dshk-wpState{color:var(--dsw-alias-label-tertiary,#9aa0aa);font-size:12px}",
+		".dshk-wpEntry{font:inherit;font-size:12px;line-height:18px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:9px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));color:var(--dsw-alias-label-secondary,#c8ccd4);padding:4px 10px;cursor:pointer;white-space:nowrap}",
+		".dshk-wpEntry:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#e8eaee)}",
+		".dshk-entryModal{width:min(680px,100%);border-color:var(--dsw-alias-border-l1,rgba(128,128,128,.24))}",
+		".dshk-entryHead{margin-bottom:10px}",
+		".dshk-entryHead h4{margin:0}",
+		".dshk-wpClose{font-size:12px}",
 		].join("\n");
 		const STYLE_ID = "dsh-permission-panel-styles";
 
@@ -2224,6 +2236,61 @@ window.__ModuleLoader__.load({
 			]);
 		}
 
+		/**
+		 * Session-header entry: one control that opens the panel over the current
+		 * Session instead of the Settings detour. Registered into
+		 * `conversation.session.header.utilities`, which is a LIST slot, so a fresh
+		 * id adds a cell beside the shipped entries (open-in-app, schedule) instead
+		 * of replacing one.
+		 *
+		 * The modal reuses `PermissionsSection` itself — the same component, the same
+		 * module-level stores — so the header view and the settings page cannot
+		 * disagree. `panel.load()` re-runs on each open, which doubles as a refresh.
+		 *
+		 * Escape is deliberately NOT wired here: closing goes through the overlay and
+		 * the close button, and a document keydown listener that outlives the modal
+		 * (this plugin unmounts without running cleanups) is exactly what
+		 * `test/platform.cjs` forbids at load time.
+		 */
+		function SessionHeaderButton(props) {
+			const { t } = props;
+			const [open, setOpen] = React.useState(false);
+			const host = typeof document === "undefined" ? null : document.body;
+			const closePanel = () => setOpen(false);
+			const trigger = React.createElement("button", {
+				type: "button",
+				className: "dshk-wpEntry",
+				key: "entry",
+				title: t("wpEntryTip"),
+				"aria-label": t("wpEntryTip"),
+				"aria-haspopup": "dialog",
+				"aria-expanded": open,
+				onClick: () => setOpen(!open),
+			}, t("wpEntryButton"));
+			const panel = open && host !== null ? createPortal(React.createElement("div", {
+				className: "dshk-overlay",
+				key: "entryPanel",
+				onMouseDown: (event) => { if (event.target === event.currentTarget) setOpen(false); },
+			}, React.createElement("div", {
+				className: "dshk-modal dshk-entryModal",
+				role: "dialog",
+				"aria-modal": "true",
+				"aria-label": t("wpNav"),
+			}, [
+				React.createElement("div", { className: "dshk-wpHead dshk-entryHead", key: "entryHead" }, [
+					React.createElement("h4", { key: "entryTitle" }, t("wpNav")),
+					React.createElement("button", {
+						type: "button",
+						className: "dshk-btn dshk-wpClose",
+						key: "entryClose",
+						onClick: closePanel,
+					}, t("wpEntryClose")),
+				]),
+				React.createElement(PermissionsSection, { t, key: "entryPanel" }),
+			])), host) : null;
+			return React.createElement(React.Fragment, null, trigger, panel);
+		}
+
 		ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
 			name: "settings.section",
 			id: "workspace-permissions",
@@ -2231,6 +2298,14 @@ window.__ModuleLoader__.load({
 			label: () => translate("wpNav"),
 			locale: NS,
 		}, PermissionsSection)), "dsh-permission-panel: permissions panel");
+
+		ctx.effect(() => ctx.slots.inject("conversation.session.header.utilities", () => ctx.slots.register({
+			name: "conversation.session.header.utilities",
+			id: "dsh-permission-panel-button",
+			order: 0,
+			label: () => translate("wpEntryTip"),
+			locale: NS,
+		}, SessionHeaderButton)), "dsh-permission-panel: session header entry");
 	}
 
 		exports.apply = apply;
