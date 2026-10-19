@@ -1,6 +1,6 @@
 {
   "name": "dsh-permission-panel",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "DSH 工作区权限面板（Web / Desktop 双载体）：在「设置 → 工作区权限」里统一查看与切换每个会话的权限预设（沙盒模式 + 审批策略），支持批量选择一键修改、自动跳过已归档会话，并可设置新会话的默认权限；另提供一个「重启 DSH」命令（仅 Desktop，Ctrl+Shift+R）。",
   "type": "module",
   "main": "./index.js",
