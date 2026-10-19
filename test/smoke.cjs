@@ -417,6 +417,8 @@ const openDropdown = (index) => {
   if (commandCalls[0].target !== "s1") {
     throw new Error("case 3/4: the command was not addressed to the clicked session by id; saw target=" + JSON.stringify(commandCalls[0].target));
   }
+  /* Snapshot before later cases clear the log (see the case 5 note). */
+  const reportedCommands = commandCalls.slice();
 
   // ---- case 5: the default-preset write goes through the settings mutate path ----
   await flush();
@@ -431,6 +433,12 @@ const openDropdown = (index) => {
   const ops = mutateCalls[0][1];
   if (ops[0].path[0] !== "defaultPreset" || ops[0].value !== "read-only") throw new Error("case 5: unexpected settings op " + JSON.stringify(ops));
   if (mutateCalls[0][2] !== 1) throw new Error("case 5: expected the descriptor revision to ride along");
+  /*
+   * Snapshot the recorder now: later cases clear these arrays to isolate their
+   * own assertions, and the closing summary must report what each case ACTUALLY
+   * observed rather than whatever the last case happened to leave behind.
+   */
+  const reportedSettingsOp = mutateCalls[0][1];
 
   // ---- case 6: confirming Full access actually applies it (once) ----
   // The confirmation handler used to call switchSession() again, which
@@ -506,11 +514,18 @@ const openDropdown = (index) => {
   }
 
   // ---- case 9: Escape closes the centered modal ----
+  /*
+   * Uses Session B, not Session A: case 8 just switched Session A to Full
+   * access and the panel now reflects the accepted preset, so picking Full
+   * access on that row again is correctly a no-op and would raise no gate.
+   * Session B is still at workspace-write, so this case exercises the gate
+   * rather than the dropdown's "already selected" short circuit.
+   */
   hookSlots.clear();
   let escTree = renderOnce(true);
   await flush();
-  escTree = openDropdown(1);
-  const escRow = collect(escTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session A"));
+  escTree = openDropdown(2);
+  const escRow = collect(escTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session B"));
   optionNamed(escRow, "danger-full-access").props.onClick();
   escTree = renderOnce(false);
   if (collect(escTree, (entry) => entry.props?.className === "dshk-modal").length !== 1) {
@@ -553,6 +568,8 @@ const openDropdown = (index) => {
   if (projectionReads.includes("s3")) {
     throw new Error("case 10: the ARCHIVED session's projection was read; archived sessions are not managed here");
   }
+  /* Snapshot before later cases clear the log (see the case 5 note). */
+  const reportedProjectionReads = projectionReads.slice();
   sessionRows[1].projections = withValues;
   /* Put the catalog back to the hinted state the later cases expect. */
   const backFill = renderOnce(true);
@@ -654,6 +671,20 @@ const openDropdown = (index) => {
   if (commandCalls[0].line !== "/permission read-only") {
     throw new Error("case 11: bulk apply sent the wrong command; saw " + JSON.stringify(commandCalls[0].line));
   }
+  /*
+   * The bulk path must ALSO publish the accepted preset to the row. It has its
+   * own copy of the dispatch loop, so fixing only the single-row path leaves a
+   * batch apply reporting success while every touched row keeps its old value.
+   * Asserted on the rendered rows, not on the recorder: the recorder only proves
+   * the command went out, which was already true when the bug was live.
+   */
+  bulkTree = renderOnce(false);
+  const bulkRowsAfter = collect(bulkTree, (entry) => entry.props?.className === "dshk-wpRow");
+  const bulkRowA = bulkRowsAfter.find((row) => explain(row).includes("Session A"));
+  if (bulkRowA === undefined) throw new Error("case 11: Session A row vanished after the bulk apply");
+  if (!explain(bulkRowA).includes("read-only")) {
+    throw new Error("case 11: the bulk apply reported success but the row kept its old preset; saw " + explain(bulkRowA));
+  }
 
   // ---- case 12: an ABSENT defaultPreset is not a broken deployment ----
   /*
@@ -690,11 +721,154 @@ const openDropdown = (index) => {
   // Restore the fixture so the reported summary describes the normal path.
   settingsView.namespaces[0].value = { defaultPreset: "workspace-write" };
 
+  // ---- case 13: a switched session's row shows the ACCEPTED preset ----
+  /*
+   * The switch used to be fire-and-forget: the command went out, the toast said
+   * "switched to …", and the row kept rendering the value the last cold read had
+   * resolved. Nothing ever revisited the session — `ensureProjections` reads only
+   * `idle` rows and `adoptSessionItems` leaves a hinted row `ready` — so the cell
+   * showed the OLD preset until a page reload, which reads as "did it work?".
+   *
+   * Session B starts at workspace-write in this fixture. Switching it to
+   * read-only must be reflected on the row without a refresh.
+   */
+  hookSlots.clear();
+  commandCalls.length = 0;
+  let reflectTree = renderOnce(true);
+  await flush();
+  const rowFor = (tree, title) => collect(tree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes(title));
+  let rowB = rowFor(reflectTree, "Session B");
+  if (rowB === undefined) throw new Error("case 13: Session B row not found");
+  if (!explain(rowB).includes("workspace-write")) {
+    throw new Error("case 13: Session B did not start at workspace-write; saw " + explain(rowB));
+  }
+  reflectTree = openDropdown(2);
+  rowB = rowFor(reflectTree, "Session B");
+  if (rowB === undefined) throw new Error("case 13: Session B row vanished when its dropdown opened");
+  const readOnlyPick = optionNamed(rowB, "read-only");
+  if (readOnlyPick === undefined) throw new Error("case 13: Session B's dropdown rendered no read-only option");
+  /*
+   * Cleared HERE, after the mount settled: earlier cases read s2 and their
+   * records are still in the log. What this case is about is whether the
+   * switch itself triggers a re-read.
+   */
+  projectionReads.length = 0;
+  readOnlyPick.props.onClick();
+  await flush();
+  if (commandCalls.length !== 1 || commandCalls[0].line !== "/permission read-only" || commandCalls[0].target !== "s2") {
+    throw new Error("case 13: the switch was not dispatched to Session B; saw " + JSON.stringify(commandCalls));
+  }
+  const afterSwitch = renderOnce(false);
+  const rowBAfter = rowFor(afterSwitch, "Session B");
+  if (rowBAfter === undefined) throw new Error("case 13: Session B row vanished after the switch");
+  if (!explain(rowBAfter).includes("read-only")) {
+    throw new Error("case 13: the row still shows the old preset after a successful switch; saw " + explain(rowBAfter));
+  }
+  if (explain(rowBAfter).includes("workspace-write")) {
+    throw new Error("case 13: the row still renders the superseded preset; saw " + explain(rowBAfter));
+  }
+  // The value came from the accepted command, not from a re-read: no projection
+  // may be fetched for a row that is already known.
+  if (projectionReads.includes("s2")) {
+    throw new Error("case 13: the row was re-read from the Host to learn its own accepted value; reads=" + JSON.stringify(projectionReads));
+  }
+
+  // ---- case 14: a refused RPC surfaces the Host's message, not "[object Object]" ----
+  /*
+   * A refused RPC does not arrive as an Error. `dispatchCommand` catches the
+   * rejection and funnels it through `describe()`, which originally only knew
+   * `Error` instances — so a plain `{ code, message }` refusal (the shape a
+   * gateway rejection takes) rendered as the literal string "[object Object]"
+   * under the session list instead of the Host's own explanation.
+   *
+   * Driven through the per-row switch because `problem` is component state: the
+   * mount effect re-runs on every render in this harness, so a `panel.status`
+   * based surface would race a concurrent reload, while the inline note does not.
+   */
+  hookSlots.clear();
+  commandCalls.length = 0;
+  const refusal = { code: "commands/rejected", message: "expected revision 1, found 2" };
+  const originalExecute = fakeScope.remote.commands.execute;
+  fakeScope.remote.commands.execute = async (target, line) => {
+    if (typeof target !== "string") {
+      return { ok: false, error: { code: "gateway/input-invalid", message: "wire field \"agentId\" failed boundary validation" } };
+    }
+    commandCalls.push({ target, line });
+    throw refusal;
+  };
+  try {
+    let refuseTree = renderOnce(true);
+    await flush();
+    refuseTree = openDropdown(1);
+    const refuseRow = collect(refuseTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session A"));
+    if (refuseRow === undefined) throw new Error("case 14: Session A row not found");
+    const rejectedPick = optionNamed(refuseRow, "workspace-write");
+    if (rejectedPick === undefined) throw new Error("case 14: Session A's dropdown rendered no workspace-write option");
+    rejectedPick.props.onClick();
+    await flush();
+    refuseTree = renderOnce(false);
+    const note = collect(refuseTree, (entry) => entry.props?.className === "dshk-note")[0];
+    if (note === undefined) throw new Error("case 14: a refused command reported nothing at all");
+    const noteText = explain(note);
+    if (noteText.includes("[object Object]")) {
+      throw new Error("case 14: a refused command rendered the useless literal [object Object]; saw " + noteText);
+    }
+    if (!noteText.includes("expected revision 1, found 2")) {
+      throw new Error("case 14: the Host's refusal message never reached the user; saw " + noteText);
+    }
+    if (!noteText.includes("wpSwitchFailed")) {
+      throw new Error("case 14: the refusal was not reported as a failed permission switch; saw " + noteText);
+    }
+  } finally {
+    fakeScope.remote.commands.execute = originalExecute;
+  }
+
+  // ---- case 15: a read-only document offers no write control ----
+  /*
+   * The official settings row refuses to write when the document is not writable
+   * (`!state.writable` guard), and `permissionPanel.select()` now carries the
+   * same guard. This case pins the USER-VISIBLE half of that contract: on a
+   * locked document the default-preset selector is disabled, no write is
+   * attempted by merely rendering, and no failure is reported for a write that
+   * was never allowed to happen.
+   *
+   * The guard inside `select()` is NOT reachable from here — the disabled
+   * trigger is exactly what keeps a click from reaching it — so this case does
+   * not and cannot prove it. It is defence in depth for the risk gate, which
+   * calls `select()` directly; a mutation of that guard leaves this case green.
+   * Written down rather than implied, because a test that silently claims more
+   * than it covers is worse than no test.
+   */
+  hookSlots.clear();
+  mutateCalls.length = 0;
+  settingsView.writable = false;
+  try {
+    renderOnce(true);
+    await flush();
+    const readOnlyTree = renderOnce(true);
+    const readOnlyCard = collect(readOnlyTree, (entry) => entry.props?.className === "dshk-card")
+      .find((card) => explain(card).includes("wpDefaultSection"));
+    if (readOnlyCard === undefined) throw new Error("case 15: the default card disappeared");
+    const readOnlyTrigger = collect(readOnlyCard, (entry) => entry.props?.className === "dshk-wpSelect")[0];
+    if (readOnlyTrigger === undefined) throw new Error("case 15: the default preset selector disappeared");
+    if (readOnlyTrigger.props.disabled !== true) {
+      throw new Error("case 15: the default preset selector is offered on a read-only document");
+    }
+    if (mutateCalls.length !== 0) {
+      throw new Error("case 15: a read-only document attempted a settings write; saw " + JSON.stringify(mutateCalls));
+    }
+    if (collect(readOnlyTree, (entry) => entry.props?.className === "dshk-note").length !== 0) {
+      throw new Error("case 15: a read-only document reported a write failure it never attempted");
+    }
+  } finally {
+    settingsView.writable = true;
+  }
+
   console.log(
     "smoke ok: portals=" + portalCalls.length +
-    " commands=" + JSON.stringify(commandCalls) +
-    " settings=" + JSON.stringify(mutateCalls[0][1]) +
-    " projections-read=" + JSON.stringify(projectionReads) +
+    " commands=" + JSON.stringify(reportedCommands) +
+    " settings=" + JSON.stringify(reportedSettingsOp) +
+    " projections-read=" + JSON.stringify(reportedProjectionReads) +
     " bulk=" + JSON.stringify(bulkTargets),
   );
 })().catch((error) => {

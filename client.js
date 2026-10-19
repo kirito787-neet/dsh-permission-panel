@@ -522,9 +522,23 @@ window.__ModuleLoader__.load({
 		function text(key) {
 			return translate(key);
 		}
-		/** Narrow an unknown rejection to a readable suffix. */
+		/**
+		 * Narrow an unknown rejection to a readable suffix.
+		 *
+		 * A refused RPC does not arrive as an Error: the host answers
+		 * `{ ok: false, error: { code, message } }` and call sites that re-throw
+		 * build `new Error(response.error.message)` themselves. The ones that pass
+		 * the raw object here (catalog failures, `permissionPanel.fail`, the
+		 * `wpDefaultFailed` handlers) would otherwise surface the useless literal
+		 * `[object Object]` instead of the Host's own message, so a plain object
+		 * that carries a string `message` is unwrapped on the same footing.
+		 */
 		function describe(cause) {
-			return cause instanceof Error ? cause.message : String(cause);
+			if (cause instanceof Error) return cause.message;
+			if (cause !== null && typeof cause === "object" && typeof cause.message === "string") {
+				return cause.message;
+			}
+			return String(cause);
 		}
 
 		/**
@@ -863,6 +877,30 @@ window.__ModuleLoader__.load({
 				entry.read = "error";
 				sessionCatalog.notify();
 			});
+		}
+
+		/**
+		 * Record the preset the Host just accepted for one session.
+		 *
+		 * Without this the row keeps rendering the value the last cold read resolved:
+		 * `ensureProjections` reads only `idle` rows and `adoptSessionItems` leaves a
+		 * hinted row `ready`, so neither path ever revisits a session the user just
+		 * switched. The switch itself succeeded, the toast says so, and the cell still
+		 * shows the old preset until the page is reloaded — the exact "did it work?"
+		 * ambiguity the panel exists to remove.
+		 *
+		 * Marked `ready`, not `idle`: the accepted value is authoritative and re-reading
+		 * it on every render would only hammer the Host. A later refresh resets the row
+		 * to `idle` (see `adoptSessionItems`) and re-reads from the Session's own log.
+		 * @param id - session the command was dispatched to.
+		 * @param preset - preset key the Host accepted.
+		 */
+		function recordSessionPreset(id, preset) {
+			const entry = sessionCatalog.byId[id];
+			if (entry === void 0) return;
+			entry.preset = preset;
+			entry.read = "ready";
+			sessionCatalog.notify();
 		}
 
 		/**
@@ -1413,7 +1451,15 @@ window.__ModuleLoader__.load({
 			/** Write one new-session default preset through the settings transport. */
 			async select(preset) {
 				const panelCtx = this.settingsCtx;
-				if (panelCtx === null || this.saving) return;
+				/*
+				 * The same guard the official row uses (`!state.writable`): a read-only
+				 * Host answers every `mutate` with `settings/rejected`, so the write can
+				 * only ever produce an error. The dropdown is disabled in that state, but
+				 * the risk gate calls `select()` straight through (see `confirmGate`), so
+				 * refusing here is what keeps a locked document from reporting a failure
+				 * it was never allowed to attempt.
+				 */
+				if (panelCtx === null || !this.writable || this.saving) return;
 				this.saving = true;
 				this.status = "saving";
 				this.error = null;
@@ -1893,6 +1939,7 @@ window.__ModuleLoader__.load({
 					setProblem(text("wpSwitchFailed") + result.message);
 					return false;
 				}
+				recordSessionPreset(row.id, preset);
 				notify(text("wpApplied") + presetLabel(preset, t));
 				return true;
 			};
@@ -1923,7 +1970,7 @@ window.__ModuleLoader__.load({
 					for (const row of targets) {
 						if (preset === row.current) { skipped += 1; continue; }
 						const result = await dispatchCommand(panel.remoteCommands, row.id, "/permission " + preset);
-						if (result.ok) changed += 1;
+						if (result.ok) { recordSessionPreset(row.id, preset); changed += 1; }
 						else failures.push(row.title + ": " + result.message);
 					}
 				} finally {
