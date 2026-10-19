@@ -106,6 +106,18 @@ parameters[0]: {
 
 顺带修了三处测试桩：它们原先**接受任意形状**，于是看到一次被记录的调用就判定通过，正是这个「宽松的假宿主」让 bug 通过了测试。现在桩会像网关一样拒绝非字符串首参，`test/host-api.cjs` 还会静态断言源码里不出现 `.execute(` 后紧跟 `{`。
 
+## 3.0.3 修掉的三个缺陷：切换算数、错误可读、只读不写
+
+这三个都在「命令已经发出去」之后才暴露，所以此前的测试全绿也发现不了。
+
+1. **切换权限后行上还显示旧预设**。`ensureProjections` 只读 `idle` 行，`adoptSessionItems` 又把带投影提示的行留在 `ready`——于是**没有任何路径**会重看用户刚切换过的会话。命令下发成功、toast 也提示成功，行上却停在旧值，直到刷新页面。现在下发成功后由 `recordSessionPreset()` 把宿主接受的值回写进会话目录（标 `ready` 而非 `idle`：接受值是权威的，每次渲染都重读只会白打宿主）。单行与**批量**两条下发循环各有自己的分支，都要回写——只修单行会让批量报告成功而每行都停在旧值。
+
+2. **RPC 拒绝被拍平成 `[object Object]`**。宿主对失败的应答是 `{ ok: false, error: { code, message, details } }`，不是 `Error` 实例。`describe()` 原来只认 `Error`，其余一律 `String(...)`；目录读取失败、`permissionPanel.fail()` 以及 `wpDefaultFailed` 两条路径都把裸对象交给它，用户于是看到无意义的占位符而不是宿主自己的说明。代码里另有两处早已正确的写法（`new Error(response.error.message)`），现在 `describe()` 与它们一致：带字符串 `message` 的普通对象取出该字段。
+
+3. **`select()` 缺 `!writable` 守卫**。官方那行有 `if (view === undefined || !state.writable || this.saving) return;`。下拉在只读文档上本就禁用，但风险确认闸门是**直接调用** `select()` 的（不能回头再进 `switchSession`，那会把刚确认的闸门重新打开），于是一份锁定的文档会被判成一次注定 `settings/rejected` 的写入，把「没被允许尝试」报成「写入失败」。
+
+测试侧补了 case 13/14/15 与批量回写断言，并对每处修复做了变异回退验证。其中 case 15 抓不住守卫变异（禁用的触发器本身就点不到那个分支），用例注释里如实写明它能证明什么、不能证明什么。另外两处原有测试的缺陷一并修掉：case 9 原先靠「切换后行不更新」这个 bug 才通过（case 8 已把 Session A 切到 Full access），改用 Session B；汇总行原本读的是被后续用例清空过的 recorder，已改为在断言点做快照。
+
 ## 安装
 
 `dsh plugin add` 只接受一个精确的包目标（本地路径、tarball、npm 包名走同一条命令）；装完会自动把包写进该 profile 的 `dsh.profile.bundles`。
