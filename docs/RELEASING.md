@@ -132,6 +132,21 @@ node -e "console.log(Object.keys(require('dsh-permission-panel/package.json').ex
 
 顺带清理：仓库 **Settings → Secrets and variables → Actions** 里如果还留着 `NPM_TOKEN`，请删掉——本流程已不使用它，留着只会在别处被误用。
 
+**新工作流已在真实 Actions 上验证过（2026-10-21 13:50，run `39611579891`）**：用 `gh workflow run release --ref chore/npm-release-hardening -f tag=v3.3.0` 跑这一版改动后的 workflow，结果是——
+
+- `测试` job **全绿**：`npm test` 8 个测试 + 新增的「校验发布包内容」(`npm pack --dry-run --json`) 都 success；
+- `发布` job 的前 6 步（清 token / npm 版本闸门 / tag 与 version 一致 / **检查该版本是否已在 npm 上**）全部 success，其中新加的检查步骤正确输出 `version 3.3.0 not published yet`；
+- 第 7 步 `npm publish --access public --provenance --loglevel verbose` **仍然失败，且是与之前一模一样的 404**：
+  ```
+  npm http fetch GET  .../idtoken/*** 200
+  npm http fetch POST 404 https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/dsh-permission-panel
+  npm verbose oidc Failed token exchange request with body message: OIDC token exchange error - package not found
+  npm error code ENEEDAUTH
+  ```
+- 之后「核验」「创建 GitHub Release」按设计 skipped，没有产生任何半截状态。
+
+**这条运行记录的意义**：它把「不是 workflow 的 bug」从推断变成了实测——同一份代码、同一台 runner、OIDC 令牌拿到了（GET idtoken 200），失败点精确落在 npm 侧的包信任关系上。所以剩下唯一的动作就是第四节那次网页登记。
+
 处理方式见第七节；**在 npm 上真的能看到 `3.3.0` 之前，不要用 3.3.0 之后的版本号继续发版**——否则 `v3.3.0` 这个 tag 永远对不上一个 npm 版本，历史会更难对齐。
 
 ## 七、失败恢复
