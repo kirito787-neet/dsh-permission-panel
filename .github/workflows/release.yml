@@ -20,7 +20,7 @@ on:
 
 permissions:
   contents: write # 创建 GitHub Release
-  id-token: write # npm Trusted Publishing 的 OIDC 凭据（顺带自动产出 provenance）
+  id-token: write # npm Trusted Publishing 的 OIDC 凭据（签名与 provenance 都要用它）
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -46,6 +46,12 @@ jobs:
       # 测试是纯 Node 自带的，不需要 npm install。
       - name: npm test
         run: npm test
+
+      # 核对真正会发出去的文件清单。少了 client.js，插件装得上但界面是空的；
+      # 多了不该进包的东西，则可能把本地配置带进 npm。--json 让清单可读。
+      # （npm pack 会跑 prepack/prepare，但不会跑 prepublishOnly，所以不会重复跑测试。）
+      - name: 校验发布包内容
+        run: npm pack --dry-run --json
 
   publish:
     name: 发布
@@ -112,24 +118,84 @@ jobs:
             console.log("version ok: " + version);
           '
 
+      # npm 不允许覆盖已发布版本。这里先查一次远端状态，把结果写成 output：
+      #   - 版本还没发布 → 正常走 publish；
+      #   - 版本已存在  → 说明这是「重跑一次已成功的发布」（npm 有了、Release 没建成的
+      #     半截状态），跳过 publish，直接去核验并补建 Release，而不是抛 E403 让人干瞪眼。
+      - name: 检查该版本是否已在 npm 上
+        id: check
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          set +e
+          published="$(npm view "${NPM_PACKAGE}@${version}" version 2>/dev/null)"
+          set -e
+          if [ -n "$published" ]; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${NPM_PACKAGE}@${published} 已在 npm 上，跳过发布，仅补核验与 GitHub Release。"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "version ${version} not published yet"
+          fi
+        env:
+          NPM_PACKAGE: ${{ github.event.repository.name }}
+
       # 凭据来自 OIDC：GitHub 签发一张短期、绑定「本仓库 + 本工作流」的一次性 token，
       # 由 npm 侧登记过的 trusted publisher 关系验证。仓库里没有任何长期 npm 密钥，
-      # 因此也不存在 90 天轮换的问题。发布成功时 provenance 证明会自动附带
-      # （公开仓库 + 公开包），无需再写 --provenance。
+      # 因此也不存在 90 天轮换的问题。
+      #
+      # 关于 --provenance：npm 文档说 trusted publishing 会自动生成 provenance，
+      # 但实测有多例「不加这个 flag 就发不出去 / 没有 attestation」，所以显式写上。
+      # 自动生成时它是幂等的，不会重复签名；仓库是公开的、repository 字段也正确，
+      # 满足 provenance 的前置条件。
       - name: 发布到 npm（Trusted Publishing / OIDC）
+        if: steps.check.outputs.already_published != 'true'
         run: |
           # --loglevel verbose 会把 npm 内部 OIDC 交换的失败原因（例如
           # 「Failed token exchange request with body message: ...」）打出来，
           # 这是判断「trusted publisher 没登记」还是「id-token 权限没给」的唯一线索。
-          if ! npm publish --access public --loglevel verbose; then
+          if ! npm publish --access public --provenance --loglevel verbose; then
             echo "::error::npm 发布失败。"
             echo "::error::如果上面出现 'Failed token exchange request' 且 body 是 404/Not Found，"
             echo "::error::说明 npm 侧还没有为本仓库登记 trusted publisher（这是账号本人的网页操作，CI 无法代做）。"
             echo "::error::打开 https://www.npmjs.com/package/${NPM_PACKAGE}/access ，在 Trusted Publisher 里添加 GitHub Actions："
             echo "::error::   Organization or user = ${GITHUB_REPOSITORY_OWNER} ，Repository = ${GITHUB_REPOSITORY#*/} ，Workflow filename = release.yml"
-            echo "::error::并在 Allowed actions 里勾上 npm publish。登记后重跑本工作流（新建的配置要在 2 天内完成首次发布，否则会过期）。"
+            echo "::error::并在 Allowed actions 里勾上 npm publish。登记后重跑本工作流（新建的配置要在 48 小时内完成首次发布，否则会过期）。"
             echo "::error::若出现 'Skipped because incorrect permissions for id-token'，则是 job 缺 id-token: write（本文件已有，检查是否被组织策略覆盖）。"
             exit 1
+          fi
+        env:
+          NPM_PACKAGE: ${{ github.event.repository.name }}
+
+      # npm publish 成功只代表 registry 收下了这次请求。真正算不算「发布成功」要看
+      # registry 上现在能不能查到，所以这里再读一次远端状态：版本号对得上、tarball
+      # 存在、provenance 证明也在。三者缺一就不能宣布发布完成。
+      - name: 核验 npm 上的实际发布结果
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "expect: ${NPM_PACKAGE}@${version}"
+          # 实测：publish 返回 202 到 registry 全文可查有 ~80 秒的传播延迟（不是失败）。
+          # 所以这里给到 5 分钟预算，避免把「还在传播」误判成「没发上去」。
+          actual=""
+          for i in $(seq 1 20); do
+            actual="$(npm view "${NPM_PACKAGE}@${version}" version 2>/dev/null || true)"
+            if [ "$actual" = "$version" ]; then
+              break
+            fi
+            echo "第 ${i}/20 次查询未就绪（actual='${actual}'），15 秒后重试"
+            sleep 15
+          done
+          if [ "$actual" != "$version" ]; then
+            echo "::error::npm 上查不到 ${NPM_PACKAGE}@${version}（实际: '${actual}'）。publish 报了成功但 registry 没有这个版本，先查 npm 状态再决定是否重发。"
+            exit 1
+          fi
+          npm view "${NPM_PACKAGE}@${version}" dist.tarball
+          # provenance 只是加分项：缺了不阻断发布（例如以后仓库转私有就没有公开证明），
+          # 但要在日志里说清楚，免得以为「有 attestation」。
+          if npm view "${NPM_PACKAGE}@${version}" dist.attestations >/dev/null 2>&1; then
+            npm view "${NPM_PACKAGE}@${version}" dist.attestations
+            echo "::notice::${NPM_PACKAGE}@${version} 已在 npm 上可查，且带 provenance 证明。"
+          else
+            echo "::warning::${NPM_PACKAGE}@${version} 已在 npm 上可查，但读不到 provenance 证明（签名令牌可能未签发）。"
           fi
         env:
           NPM_PACKAGE: ${{ github.event.repository.name }}
