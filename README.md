@@ -73,7 +73,7 @@ dsh plugin --profile <profile> add "file:<绝对路径>/dsh-permission-panel-<ve
 dsh plugin --profile <profile> add dsh-permission-panel
 
 # 需要固定某一版时
-dsh plugin --profile <profile> add dsh-permission-panel@3.2.0
+dsh plugin --profile <profile> add dsh-permission-panel@3.3.0
 ```
 
 - `--profile` 是必填项，没有默认 profile。
