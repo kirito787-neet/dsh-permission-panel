@@ -8,7 +8,7 @@
 
 - 每次发布是一个不可变快照：tag `vX.Y.Z` 必须指向真正被发布的那个提交。
 - 版本号由 `tools/release.cjs` 在**本地**决定并写进 `package.json`，随 tag 一起推上去；CI 不回写版本、不猜版本。
-- `.github/workflows/release.yml` 只做三件事：跑测试 → 用 Trusted Publishing (OIDC) 发布 → 建 GitHub Release。
+- `.github/workflows/release.yml` 负责：跑测试与包内容校验 → 用 Trusted Publishing (OIDC) 发布 → 回读 npm 确认真的发上去了 → 建 GitHub Release。
 - 这是本项目**唯一**的发布流水线。不要并行搭建第二套（semantic-release、release-please、changesets 等），也不要在分支合并时自动发布。
 
 ## 首次接入 / 换环境
