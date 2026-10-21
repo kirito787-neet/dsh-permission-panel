@@ -192,6 +192,11 @@ const PRESET_LABELS = {
   wpGroupCount: "{n} session(s)",
   wpSearchCount: "{n} / {total} matching",
   wpSearchEmpty: "No matching sessions.",
+  wpFilterAll: "All",
+  wpFilterOther: "Other",
+  wpFilterLabel: "Filter by permission level",
+  wpFilterEmpty: "No sessions with that permission level.",
+  wpPresetAuto: "Auto",
   wpSelectAllLabel: "Select all",
   wpSelectAll: "Select every manageable session",
   wpSelectAllVisible: "Select all {n} visible sessions",
@@ -425,12 +430,30 @@ const groupToggleFor = (tree, workspaceTitle) => {
     if (scrollCalls.length !== 0) throw new Error("case 5: an absent session was scrolled to anyway");
   }
 
+  // ---- case 6: a permission-level filter hiding the current session is reset by locate ----
+  {
+    scrollCalls.length = 0;
+    let tree = await mount("s1"); // s1 is workspace-write
+    const readOnlyChip = collect(tree, (entry) => entry.$$el === true && entry.type === "button" && typeof entry.props?.className === "string" && entry.props.className.split(" ").includes("dshk-wpFilter") && explain(entry).includes("read-only"))[0];
+    if (readOnlyChip === undefined) throw new Error("case 6: the read-only permission chip is missing");
+    readOnlyChip.props.onClick();
+    tree = renderOnce(false, "s1");
+    if (rowFor(tree, "s1") !== undefined) throw new Error("case 6: the permission filter did not hide the current session's row");
+    const button = locateButtons(tree)[0];
+    if (button === undefined) throw new Error("case 6: locate button vanished while a permission filter was active");
+    button.props.onClick();
+    tree = renderOnce(false, "s1");
+    if (problemNotes(tree).length !== 0) throw new Error("case 6: a permission-filter miss was reported as missing: " + explain(problemNotes(tree)[0]));
+    if (rowFor(tree, "s1") === undefined) throw new Error("case 6: locating did not reset the permission filter and reveal the row");
+    if (scrollCalls.length !== 1 || scrollCalls[0].id !== "s1") throw new Error("case 6: locating did not scroll after resetting the filter; saw " + JSON.stringify(scrollCalls));
+  }
+
   // Tear down any effect cleanups (the flash timer) so the process exits at once.
   for (const cleanup of cleanups) cleanup();
   cleanups.length = 0;
 
   console.log(
-    "locate ok: cases=5 scrolls-last-case=" + JSON.stringify(scrollCalls.map((call) => call.id)),
+    "locate ok: cases=6 scrolls-last-case=" + JSON.stringify(scrollCalls.map((call) => call.id)),
   );
 })().catch((error) => {
   console.error("locate FAILED:", error.message);

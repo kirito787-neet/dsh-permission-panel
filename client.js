@@ -127,6 +127,11 @@ window.__ModuleLoader__.load({
 			wpPresetReadOnly: "仅可查看",
 			wpPresetWorkspaceWrite: "工作区内修改",
 			wpPresetFullAccess: "完全权限",
+			wpPresetAuto: "自动",
+			wpFilterLabel: "按权限等级筛选",
+			wpFilterAll: "全部",
+			wpFilterOther: "未知/自定义",
+			wpFilterEmpty: "没有符合该权限等级的会话。",
 			wpAcknowledge: "我已了解风险，并愿意继续",
 			confirmEnable: "启用完全权限",
 			cancel: "取消",
@@ -219,6 +224,11 @@ window.__ModuleLoader__.load({
 			wpPresetReadOnly: "Read Only",
 			wpPresetWorkspaceWrite: "Workspace Write",
 			wpPresetFullAccess: "Full access",
+			wpPresetAuto: "Auto",
+			wpFilterLabel: "Filter by permission level",
+			wpFilterAll: "All",
+			wpFilterOther: "Other",
+			wpFilterEmpty: "No sessions with that permission level.",
 			wpAcknowledge: "I understand the risks and want to continue",
 			confirmEnable: "Enable Full access",
 			cancel: "Cancel",
@@ -269,6 +279,16 @@ window.__ModuleLoader__.load({
 		".dshk-wpSearch:focus{border-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0)}",
 		".dshk-wpSearch::placeholder{color:var(--dsw-alias-label-tertiary,#9aa0aa)}",
 		".dshk-pickAllBox{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c8ccd4);cursor:pointer;white-space:nowrap}",
+		/* Permission-level filter chips. A wrapping flex row so the toolbar and the
+		 * chips both fold gracefully on a narrow settings pane. */
+		".dshk-wpFilters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1 0 100%;margin:0}",
+		".dshk-wpFilterLabel{flex:none;font-size:11px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0aa);white-space:nowrap}",
+		".dshk-wpFilter{display:inline-flex;align-items:center;gap:5px;flex:none;font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));color:var(--dsw-alias-label-secondary,#c8ccd4);cursor:pointer;white-space:nowrap}",
+		".dshk-wpFilter:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#e8eaee)}",
+		".dshk-wpFilterOn{border-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0);background:var(--dsw-alias-interactive-bg-primary,#3b6fe0);color:#fff}",
+		".dshk-wpFilterOn:hover{background:var(--dsw-alias-interactive-bg-primary,#3b6fe0);color:#fff}",
+		".dshk-wpFilterCount{font-size:10px;line-height:14px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-3,rgba(128,128,128,.18));color:inherit;white-space:nowrap}",
+		".dshk-wpFilterOn .dshk-wpFilterCount{background:rgba(255,255,255,.22)}",
 		/* Workspace groups. */
 		".dshk-wpGroup{margin-top:2px}",
 		".dshk-wpGroupHead{display:flex;align-items:center;gap:8px;padding:7px 0 3px;margin-top:4px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.16))}",
@@ -691,6 +711,15 @@ window.__ModuleLoader__.load({
 			"workspace-write": "wpPresetWorkspaceWrite",
 			[FULL_ACCESS_PRESET]: "wpPresetFullAccess",
 			/*
+			 * `auto` is the fourth official preset. It is not part of the
+			 * titleCase fallback's vocabulary only because the fallback would
+			 * spell it fine ("Auto") — but naming it in the dictionary keeps the
+			 * label consistent with the other three and gives the filter chips a
+			 * stable key. A deployment that does not offer it simply never sees
+			 * this key.
+			 */
+			auto: "wpPresetAuto",
+			/*
 			 * `custom` is derived, never configured — the Host omits it from the
 			 * catalog, so a row whose knobs match no preset has a current value
 			 * the dropdown cannot find an option for. It is still a real, current
@@ -706,6 +735,26 @@ window.__ModuleLoader__.load({
 		function presetLabel(value, t) {
 			const key = PRESET_LABEL_KEYS[value];
 			return key === void 0 ? titleCasePreset(value) : t(key);
+		}
+
+		/*
+		 * Permission-level filtering vocabulary.
+		 *
+		 * `FILTER_ALL` is the "no filter" value. Every other chip is keyed by a
+		 * preset machine value, except `FILTER_OTHER`, the catch-all bucket for a
+		 * row whose `current` is null, `custom`, or a deployment-specific value
+		 * outside the four official presets. The chips themselves are DERIVED
+		 * from what the list actually contains (see the `presetBuckets` memo), so
+		 * the fixed order below only determines display order — a deployment that
+		 * ships three presets simply has no `auto` chip to show.
+		 */
+		const FILTER_ALL = "all";
+		const FILTER_OTHER = "other";
+		const FILTER_PRESET_ORDER = ["read-only", "workspace-write", FULL_ACCESS_PRESET, "auto"];
+
+		/** Which filter bucket one row's current permission value belongs to. */
+		function presetBucketOf(value) {
+			return typeof value === "string" && FILTER_PRESET_ORDER.includes(value) ? value : FILTER_OTHER;
 		}
 
 		/*
@@ -2105,6 +2154,18 @@ window.__ModuleLoader__.load({
 			/** Current text of the session filter box. */
 			const [query, setQuery] = React.useState("");
 			/**
+			 * Selected permission-level filter.
+			 *
+			 * `"all"` disables the filter; any other value is a preset machine
+			 * value (`read-only` / `workspace-write` / `danger-full-access` /
+			 * `auto`) or the synthetic `"other"` bucket that collects rows whose
+			 * `current` is null, `custom`, or some value the process catalog does
+			 * not offer. The chips themselves are derived from the ACTUAL values
+			 * present in the list (see `presetBuckets`), never hardcoded — a
+			 * deployment that ships only three presets simply has no `auto` chip.
+			 */
+			const [presetFilter, setPresetFilter] = React.useState("all");
+			/**
 			 * Group keys the user expanded. EMPTY MEANS EVERYTHING COLLAPSED —
 			 * the reverse of the previous field, because "collapsed by default"
 			 * cannot be expressed by seeding a collapsed-set with keys that are
@@ -2321,7 +2382,13 @@ window.__ModuleLoader__.load({
 			 * matching session is dropped rather than shown empty.
 			 */
 			const normalizedQuery = query.trim().toLowerCase();
-			const groups = React.useMemo(() => {
+			/*
+			 * Query filter first, then the permission-level filter. Keeping them
+			 * as two memos means the chip counts can be derived from the search
+			 * result (so they answer "how many of MY matches sit at each level")
+			 * while the chip SET stays stable.
+			 */
+			const queryGroups = React.useMemo(() => {
 				const built = groupRowsByWorkspace(rows, workspaces);
 				if (normalizedQuery === "") return built;
 				const filtered = [];
@@ -2331,6 +2398,49 @@ window.__ModuleLoader__.load({
 				}
 				return filtered;
 			}, [rows, workspaces, normalizedQuery]);
+			/*
+			 * Apply the permission-level filter on top of the search result. A
+			 * group whose sessions all fall outside the chosen level is DROPPED by
+			 * the same path the search uses — never left as an empty heading.
+			 */
+			const groups = React.useMemo(() => {
+				if (presetFilter === FILTER_ALL) return queryGroups;
+				const filtered = [];
+				for (const group of queryGroups) {
+					const matched = group.sessions.filter((row) => presetBucketOf(row.current) === presetFilter);
+					if (matched.length > 0) filtered.push({ ...group, sessions: matched });
+				}
+				return filtered;
+			}, [queryGroups, presetFilter]);
+
+			/**
+			 * The filter chips: `[全部, …levels present…, 未知/自定义?]`.
+			 *
+			 * Derived from the ACTUAL `current` values in the list, so a deployment
+			 * that ships only three presets never shows an `auto` chip. Counts come
+			 * from the SEARCH result rather than the raw list, so every number beside
+			 * a chip — 全部 included — is a count of the sessions the search box left
+			 * at that level. That is what makes a chip a promise about what clicking
+			 * it will show. The active filter is always kept in the list even if its
+			 * count fell to zero, so it can always be clicked off.
+			 */
+			const presetBuckets = React.useMemo(() => {
+				const counts = new Map();
+				let queryTotal = 0;
+				for (const group of queryGroups) {
+					for (const row of group.sessions) {
+						const bucket = presetBucketOf(row.current);
+						counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+						queryTotal += 1;
+					}
+				}
+				const out = [{ value: FILTER_ALL, count: queryTotal }];
+				for (const value of FILTER_PRESET_ORDER) {
+					if (counts.has(value) || value === presetFilter) out.push({ value, count: counts.get(value) ?? 0 });
+				}
+				if (counts.has(FILTER_OTHER) || presetFilter === FILTER_OTHER) out.push({ value: FILTER_OTHER, count: counts.get(FILTER_OTHER) ?? 0 });
+				return out;
+			}, [queryGroups, presetFilter]);
 
 			/** Rows currently visible after filtering; the universe bulk actions act on. */
 			const visibleRows = React.useMemo(() => {
@@ -2353,13 +2463,27 @@ window.__ModuleLoader__.load({
 			 */
 			const hiddenWorkspaceCount = React.useMemo(() => {
 				if (workspaces.length === 0) return 0;
-				const present = new Set(rows.map((row) => row.id));
+				/*
+				 * Counted from the PRESET-filtered rows, not the raw list: when the
+				 * user narrows by permission level, a Workspace whose every session
+				 * falls outside that level should be reported as hidden rather than
+				 * vanishing silently — the count answers "where did that heading go".
+				 *
+				 * The search box is deliberately NOT applied here: counting after the
+				 * query would report the user's own typing as hidden data. The
+				 * permission filter is a deliberate narrowing of the dataset, so it
+				 * belongs in this count; keystrokes do not.
+				 */
+				const present = new Set(
+					(presetFilter === FILTER_ALL ? rows : rows.filter((row) => presetBucketOf(row.current) === presetFilter))
+						.map((row) => row.id),
+				);
 				let hidden = 0;
 				for (const workspace of workspaces) {
 					if (!workspace.sessionIds.some((id) => present.has(id))) hidden += 1;
 				}
 				return hidden;
-			}, [rows, workspaces]);
+			}, [rows, workspaces, presetFilter]);
 
 			/** Selectable rows in the current filter result, folded or not. */
 			const selectableRows = React.useMemo(
@@ -2490,7 +2614,15 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				setProblem(null);
+				/*
+				 * Clearing the search alone is not enough: the permission-level
+				 * filter is a SECOND narrowing that can hide the current row just
+				 * as effectively, and it would leave the promise of this button
+				 * broken — unfold the Workspace, then scroll to a row that filter
+				 * forbids rendering. Reset it to ALL so the target always exists.
+				 */
 				if (query !== "") setQuery("");
+				if (presetFilter !== FILTER_ALL) setPresetFilter(FILTER_ALL);
 				setExpandedGroups((previous) => {
 					const next = new Set(previous);
 					next.add(group.key);
@@ -2865,7 +2997,7 @@ window.__ModuleLoader__.load({
 				React.createElement("div", { className: "dshk-card", key: "sessions" }, [
 					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
 						React.createElement("div", { className: "dshk-wpHeadMain", key: "hmain" }, [
-							React.createElement("h4", { key: "h" }, normalizedQuery === "" || visibleRows.length === rows.length
+							React.createElement("h4", { key: "h" }, visibleRows.length === rows.length
 								? t("wpSessionSection") + " · " + t("wpCount") + rows.length
 								: t("wpSessionSection") + " · " + t("wpSearchCount").replace("{n}", String(visibleRows.length)).replace("{total}", String(rows.length))),
 						]),
@@ -2940,6 +3072,34 @@ window.__ModuleLoader__.load({
 							}),
 							React.createElement("span", { key: "label" }, t("wpSelectAllLabel")),
 						]),
+						/*
+						 * Permission-level chips. Placed INSIDE the toolbar so the two
+						 * filters (search + level) read as one control group; the
+						 * `flex:1 0 100%` on the row makes it wrap to its own line.
+						 * Clicking a chip only narrows the list — it does NOT expand
+						 * any group (see `renderGroup`, which keys on the query, not
+						 * on this filter).
+						 */
+						React.createElement("div", {
+							key: "filters",
+							className: "dshk-wpFilters",
+							role: "group",
+							"aria-label": t("wpFilterLabel"),
+						}, [
+							React.createElement("span", { key: "label", className: "dshk-wpFilterLabel" }, t("wpFilterLabel")),
+							...presetBuckets.map((bucket) => React.createElement("button", {
+								key: bucket.value,
+								type: "button",
+								className: "dshk-wpFilter" + (presetFilter === bucket.value ? " dshk-wpFilterOn" : ""),
+								"aria-pressed": presetFilter === bucket.value,
+								onClick: () => setPresetFilter(bucket.value),
+							}, [
+								React.createElement("span", { key: "name" }, bucket.value === FILTER_ALL
+									? t("wpFilterAll")
+									: bucket.value === FILTER_OTHER ? t("wpFilterOther") : presetLabel(bucket.value, t)),
+								React.createElement("span", { key: "count", className: "dshk-wpFilterCount" }, String(bucket.count)),
+							])),
+						]),
 					]),
 					/*
 					 * The bulk bar appears only once something is ticked. It carries its own
@@ -2978,7 +3138,7 @@ window.__ModuleLoader__.load({
 					rows.length === 0
 						? React.createElement("div", { className: "dshk-wpState", key: "empty" }, t("wpEmpty"))
 						: visibleRows.length === 0
-							? React.createElement("div", { className: "dshk-wpState", key: "noMatch" }, t("wpSearchEmpty"))
+							? React.createElement("div", { className: "dshk-wpState", key: "noMatch" }, presetFilter === FILTER_ALL ? t("wpSearchEmpty") : t("wpFilterEmpty"))
 							: groups.map((group) => grouped
 								? renderGroup(group)
 								/* One bucket, no Workspaces: headers would be noise. */
