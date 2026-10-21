@@ -156,39 +156,51 @@ git push origin master --follow-tags
 推上去之后 `.github/workflows/release.yml` 会：
 
 1. 再跑一遍 `npm test`（tag 指向的代码必须自己是绿的）；
-2. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；
-3. `npm publish --access public --provenance`；
-4. `gh release create <tag> --generate-notes`。
+2. 确认 CI 里的 npm CLI ≥ 11.5.1（Trusted Publishing 的下限，旧版会静默退回 token 认证然后失败）；
+3. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；
+4. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public`，provenance 证明自动附带；
+5. `gh release create <tag> --generate-notes`。
 
 任一步失败，后面的步骤不会执行，所以不会出现「npm 有了但 GitHub 没有」这种半截状态。
 
-### 发布凭据怎么配
+### 发布凭据：Trusted Publishing，没有长期密钥
 
-仓库 secret **`NPM_TOKEN`**：在 [npmjs.com](https://www.npmjs.com/settings/tokens) 建一个 **Granular Access Token**，填法有三处不能错：
+发布**不使用任何 npm token**。仓库里没有 `NPM_TOKEN`，CI 里也没有 `NODE_AUTH_TOKEN`；凭据来自 GitHub Actions 的 OIDC：每次发布会由 GitHub 签发一张短期、绑定「本仓库 + 本工作流 + `release.yml`」的一次性 token，npm 侧用事先登记的 trusted publisher 关系验证它。
 
-- **Packages and scopes → Permissions** 选 **Read and write**（选默认的 "No access" 会在 publish 时 403）；
-- **Bypass two-factor authentication (2FA)** 必须勾上——CI 里没人能输验证码，不勾会以 `EOTP` 失败；
-- **Expiration** 最长只能 90 天（npm 自 2025-10 起对写权限的 granular token 硬限），到期前要换新的。
+代价是需要在 npm 网站手工登记一次（这一步必须由账号本人在浏览器里做，带 2FA，任何 API token 都改不了这个设置）：
 
-> 顺带一句：npm 已在 2025-11 撤掉全部 classic token 并停止生成。网上很多教程还在教 **Automation** 类型，这个类型现在不存在了，只有 granular token。
+1. 打开 <https://www.npmjs.com/package/dsh-permission-panel/access>
+2. 找到 **Trusted Publisher** → **Select your publisher** → **GitHub Actions**
+3. 填三项：
+   - **Organization or user**：`kirito787-neet`
+   - **Repository**：`dsh-permission-panel`
+   - **Workflow filename**：`release.yml`（只填文件名，不要带 `.github/workflows/` 前缀）
+4. **Allowed actions** 勾上 **npm publish**（这一项不勾，OIDC 身份只能做 stage publish，正式发布会 403）
+5. 保存
 
-存 secret（token 走 stdin，不落 shell 历史）：
+两个容易踩的坑：
+
+- **配置有 2 天有效期**：新建的 trusted publisher 必须在 2 天内成功发布一次，才算验证通过并绑定到仓库的不可变身份；超时会过期作废，只能删掉重建。
+- **`Environment name` 留空**：本工作流没有用 GitHub Environments，填了会导致 OIDC 声明的 `sub` 对不上。
+
+登记完成后，本项目的发版就变成纯 OIDC：
 
 ```bash
-gh secret set NPM_TOKEN --repo <owner>/<repo>
+npm run release patch          # 本地改版本 + 跑测试 + 提交 + 打 tag
+git push origin master --follow-tags   # CI 用 OIDC 发布
 ```
 
-没有配 `NPM_TOKEN` 时，工作流只建 GitHub Release 并打印一条 warning，不会失败——首次发布前也能先把 Release 建起来。
+如果 `npm publish` 报 `404` / `401` / `EOTP`，九成是上面那一步没登记或登记错了（工作流会把该填的三项直接打印到日志里）。手动补发某个已存在的 tag：`gh workflow run release -f tag=v3.2.0`。
 
-**仓库写权限**：工作流已声明 `permissions: contents: write`，用的是自动注入的 `GITHUB_TOKEN`，不需要额外配置。
+**仓库写权限**：创建 Release 用的是自动注入的 `GITHUB_TOKEN`，工作流已声明 `permissions: contents: write`，不需要额外配置。
 
-> 想彻底免掉 token 轮换，可改用 npm 的 [Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers)：在 npm 包设置里登记仓库与 workflow 名，CI 用一次性短期凭据直接发布。本工作流已声明 `id-token: write`，届时删掉 `NODE_AUTH_TOKEN` 那段即可。
-
-手动补发某个已存在的 tag：`gh workflow run release -f tag=v3.2.0`。
+> 想更严格，可以在 npm 包的 **Settings → Publishing access** 里选「Require two-factor authentication and disallow tokens」：这会禁掉所有传统 token 的发布权限，而 OIDC trusted publisher 不受影响。本仓库已经没有 token 了，所以这一项只是加一道保险。
+>
+> Trusted Publishing 要求 npm CLI ≥ 11.5.1、Node ≥ 22.14.0；本仓库的 `engines` 是 `^22.19.0 || >=24.0.0`，CI 用 Node 24，都满足。
 
 ### 为什么发版脚本不直接 `npm publish`
 
-发布凭据只该存在两个地方——CI 的 secret，或者你本人的登录态。把 token 摊在本地脚本参数里，它就会进 shell 历史、日志和任何一次录屏。
+发布凭据只该存在一个地方——CI 由 OIDC 现签发，本地不留任何东西。本机装插件用 `dsh plugin add` 或 `npm pack` 都行，不需要发布权限。
 
 ## 设计取舍与边界
 

@@ -12,9 +12,9 @@
  * 真正的发布由 .github/workflows/release.yml 在 tag 推上去之后完成——
  * 那里会再跑一遍测试，然后 npm publish 并创建 GitHub Release。
  *
- * 为什么不在这里直接 npm publish：发布凭据只该存在两个地方——CI 的
- * NPM_TOKEN secret，或者你本人的登录态。把 token 摊在本地脚本的参数里，
- * 它就会出现在 shell 历史、日志和任何一次录屏里。
+ * 为什么不在这里直接 npm publish：发布凭据由 CI 的 OIDC（Trusted Publishing）
+ * 在发布那一刻现签发，本地不该持有任何 npm 密钥。把 token 摊在本地脚本的参数里，
+ * 它就会出现在 shell 历史、日志和任何一次录屏里——而现在根本没有 token 可摊。
  */
 
 const { spawnSync } = require("node:child_process");

@@ -20,7 +20,7 @@ on:
 
 permissions:
   contents: write # 创建 GitHub Release
-  id-token: write # npm provenance（OIDC 签名）
+  id-token: write # npm Trusted Publishing 的 OIDC 凭据（顺带自动产出 provenance）
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -57,10 +57,26 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
+      # registry-url 只用来生成指向 npmjs 的 .npmrc；这里刻意不传 token，
+      # 让 npm CLI 走 OIDC（它会自动发现 id-token 环境并优先使用）。
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing 需要 npm CLI >= 11.5.1；旧版会静默退回 token 认证然后 401。
+      - name: 确认 npm 支持 Trusted Publishing
+        run: |
+          version="$(npm --version)"
+          echo "npm $version"
+          node -e '
+            const [maj, min, pat] = process.argv[1].split(".").map(Number);
+            const ok = maj > 11 || (maj === 11 && (min > 5 || (min === 5 && pat >= 1)));
+            if (!ok) {
+              console.error("npm " + process.argv[1] + " 太旧，Trusted Publishing 需要 >= 11.5.1");
+              process.exit(1);
+            }
+          ' "$version"
 
       # tag 与 package.json 必须说同一个版本号，否则会发出一个「名字和内容不符」的包，
       # 而 npm 不允许覆盖已发布版本，错了只能改名重发。
@@ -76,18 +92,24 @@ jobs:
             console.log("version ok: " + version);
           '
 
-      - name: 发布到 npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # 凭据来自 OIDC：GitHub 签发一张短期、绑定「本仓库 + 本工作流」的一次性 token，
+      # 由 npm 侧登记过的 trusted publisher 关系验证。仓库里没有任何长期 npm 密钥，
+      # 因此也不存在 90 天轮换的问题。发布成功时 provenance 证明会自动附带
+      # （公开仓库 + 公开包），无需再写 --provenance。
+      - name: 发布到 npm（Trusted Publishing / OIDC）
         run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::warning::仓库没有配置 NPM_TOKEN，跳过 npm 发布（只建 GitHub Release）。"
-            echo "在 Settings → Secrets and variables → Actions 添加 NPM_TOKEN 后，重跑本工作流即可补发。"
-            exit 0
+          if ! npm publish --access public; then
+            echo "::error::npm 发布失败。若错误是 404 / 401 / EOTP，最常见的原因是 npm 侧还没有为本仓库登记 trusted publisher。"
+            echo "::error::打开 https://www.npmjs.com/package/${NPM_PACKAGE}/access ，在 Trusted Publisher 里添加 GitHub Actions："
+            echo "::error::   Organization or user = ${GITHUB_REPOSITORY%%/*} ，Repository = ${GITHUB_REPOSITORY#*/} ，Workflow filename = release.yml"
+            echo "::error::并在 Allowed actions 里勾上 npm publish。登记后重跑本工作流（新建的配置要在 2 天内完成首次发布，否则会过期）。"
+            exit 1
           fi
-          npm publish --access public --provenance
+        env:
+          NPM_PACKAGE: ${{ github.event.repository.name }}
 
-      # Release 先建：即使 npm 那一步因为缺少密钥被跳过，用户也应该在 GitHub 上看到这一版。
+      # Release 放在发布之后：npm 那一步失败就直接失败，不会留下「GitHub 上有版本、
+      # npm 上没有」的假象。反过来（npm 有、Release 没建成）重跑本工作流即可补齐。
       - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
