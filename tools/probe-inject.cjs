@@ -19,7 +19,8 @@
  *
  * Usage: node tools/probe-inject.cjs
  */
-const CORDIS = "C:/Users/Kirito787/AppData/Local/Programs/deepseek-harness/vendor/cordis/lib/index.js";
+const path = require("path");
+const CORDIS = path.join(require("./dsh-install.cjs").DSH, "vendor", "cordis", "lib", "index.js");
 
 (async () => {
   const { Context, Service } = await import("file://" + CORDIS);

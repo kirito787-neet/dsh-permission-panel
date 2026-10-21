@@ -74,7 +74,30 @@ window.__ModuleLoader__.load({
 			wpRefresh: "刷新列表",
 			wpEmpty: "当前没有会话。",
 			wpArchivedSkipped: "已跳过已归档会话：",
-			wpSelectAll: "全选可管理会话",
+			wpSelectAll: "全选当前展开的会话",
+			wpSelectAllVisible: "全选当前展开的 {n} 个会话",
+			wpSelectGroup: "选中此工作区的全部会话",
+			wpExpandAll: "展开全部",
+			wpCollapseAll: "折叠全部",
+			wpGroupSelected: "已选 {n}",
+			wpSearchPlaceholder: "搜索会话标题、目录或工作区…",
+			wpSearchClear: "清除搜索",
+			wpSearchEmpty: "没有匹配的会话。",
+			wpSearchCount: "匹配 {n} / {total}",
+			wpGroupUngrouped: "未分组",
+			wpGroupCount: "{n} 个会话",
+			wpGroupEmptyHidden: "已隐藏 {n} 个没有可管理会话的工作区。",
+			wpCollapseGroup: "折叠工作区 {name}",
+			wpExpandGroup: "展开工作区 {name}",
+			wpCurrentSection: "当前会话实际生效策略",
+			wpCurrentUnknown: "无法确定当前会话（设置页没有当前视图信息）。请用会话头部的「权限」按钮查看。",
+			wpCurrentLive: "宿主投影实时值，不是本地缓存的旧值。",
+			wpCurrentRefresh: "重新读取",
+			wpCurrentSubject: "会话：",
+			wpEffective: "实际生效",
+			wpPolicyCustom: "当前沙盒与审批设置不匹配任何预设；选择任一预设即可脱离该状态。",
+			wpPolicyUnknown: "宿主没有提供这个预设的策略说明。",
+			wpSelectAllLabel: "全选",
 			wpSelectOne: "选择会话 {name}",
 			wpSelectedCount: "已选 {n} 个会话",
 			wpBulkApply: "应用到所选",
@@ -141,7 +164,30 @@ window.__ModuleLoader__.load({
 			wpRefresh: "Refresh list",
 			wpEmpty: "No sessions right now.",
 			wpArchivedSkipped: "Archived sessions skipped: ",
-			wpSelectAll: "Select every manageable session",
+			wpSelectAll: "Select every expanded session",
+			wpSelectAllVisible: "Select all {n} expanded sessions",
+			wpSelectGroup: "Select every session in this workspace",
+			wpExpandAll: "Expand all",
+			wpCollapseAll: "Collapse all",
+			wpGroupSelected: "{n} selected",
+			wpSearchPlaceholder: "Search session title, folder, or workspace…",
+			wpSearchClear: "Clear search",
+			wpSearchEmpty: "No matching sessions.",
+			wpSearchCount: "{n} / {total} matching",
+			wpGroupUngrouped: "Ungrouped",
+			wpGroupCount: "{n} session(s)",
+			wpGroupEmptyHidden: "Workspaces with no manageable sessions hidden: {n}",
+			wpCollapseGroup: "Collapse workspace {name}",
+			wpExpandGroup: "Expand workspace {name}",
+			wpCurrentSection: "Policy in effect for this session",
+			wpCurrentUnknown: "Cannot tell which session is current from the settings page. Use the Permissions button in a session header.",
+			wpCurrentLive: "Live value from the host projection, not a cached local value.",
+			wpCurrentRefresh: "Read again",
+			wpCurrentSubject: "Session: ",
+			wpEffective: "In effect",
+			wpPolicyCustom: "The current sandbox and approval settings match no preset; picking any preset leaves this state.",
+			wpPolicyUnknown: "The host publishes no policy note for this preset.",
+			wpSelectAllLabel: "Select all",
 			wpSelectOne: "Select session {name}",
 			wpSelectedCount: "{n} selected",
 			wpBulkApply: "Apply to selected",
@@ -213,6 +259,32 @@ window.__ModuleLoader__.load({
 		".dshk-wpRowPicked{background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));border-radius:8px}",
 		".dshk-wpHeadMain{display:flex;align-items:center;gap:8px;min-width:0}",
 		".dshk-pickAll,.dshk-pick{width:15px;height:15px;flex:none;margin:0;accent-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0);cursor:pointer}",
+		/* Search + select-all toolbar. */
+		".dshk-wpTools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 6px}",
+		".dshk-wpSearch{flex:1;min-width:150px;font:inherit;font-size:12px;line-height:18px;padding:5px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:9px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));color:var(--dsw-alias-label-primary,#e8eaee);outline:none}",
+		".dshk-wpSearch:focus{border-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0)}",
+		".dshk-wpSearch::placeholder{color:var(--dsw-alias-label-tertiary,#9aa0aa)}",
+		".dshk-pickAllBox{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c8ccd4);cursor:pointer;white-space:nowrap}",
+		/* Workspace groups. */
+		".dshk-wpGroup{margin-top:2px}",
+		".dshk-wpGroupHead{display:flex;align-items:center;gap:8px;padding:7px 0 3px;margin-top:4px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.16))}",
+		".dshk-wpGroup:first-of-type .dshk-wpGroupHead{border-top:none;margin-top:0}",
+		".dshk-wpGroupToggle{flex:none;width:18px;height:18px;padding:0;display:grid;place-items:center;border:none;border-radius:5px;background:transparent;color:var(--dsw-alias-label-tertiary,#9aa0aa);cursor:pointer}",
+		".dshk-wpGroupToggle:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary,#e8eaee)}",
+		".dshk-chevronCollapsed{transform:rotate(-90deg)}",
+		".dshk-wpGroupTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#e8eaee);min-width:0;max-width:46%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+		".dshk-wpGroupPath{flex:1;min-width:0;font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0aa);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+		".dshk-wpGroupCount{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0aa);white-space:nowrap}",
+		".dshk-wpGroupPicked{flex:none;font-size:11px;line-height:16px;padding:0 7px;border-radius:8px;background:var(--dsw-alias-interactive-bg-primary,#3b6fe0);color:#fff;white-space:nowrap}",
+		".dshk-wpGroupBody{padding-inline-start:20px}",
+		".dshk-wpFoldAll{flex:none;white-space:nowrap}",
+		/* Current-session policy card. */
+		".dshk-wpChip{flex:none;font-size:12px;line-height:18px;padding:2px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:9px;color:var(--dsw-alias-label-primary,#e8eaee);white-space:nowrap}",
+		".dshk-currentRow{display:flex;align-items:center;gap:10px;min-width:0}",
+		".dshk-currentCopy{flex:1;min-width:0}",
+		".dshk-currentPolicy{margin:8px 0 0 36px}",
+		".dshk-currentHint{margin:0 0 10px}",
+		".dshk-pickAllGroup{width:14px;height:14px;flex:none;margin:0;accent-color:var(--dsw-alias-interactive-bg-primary,#3b6fe0);cursor:pointer}",
 		".dshk-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;margin:6px 0 2px;border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.2));border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.06))}",
 		".dshk-bulkCount{font-size:12px;color:var(--dsw-alias-label-secondary,#c8ccd4);white-space:nowrap}",
 		".dshk-bulkApply{margin-left:auto}",
@@ -590,6 +662,14 @@ window.__ModuleLoader__.load({
 		/** Preset machine value that must pass an explicit risk gate before switching. */
 		const FULL_ACCESS_PRESET = "danger-full-access";
 		/**
+		 * The Host's DERIVED "knobs match no preset" value.
+		 *
+		 * It is a real current value (`permissions.currentValue` can be `custom`) but
+		 * by design it is never a row in the process catalog: the Host refuses to
+		 * persist it. So it must be LABELED when shown and never offered as an option.
+		 */
+		const CUSTOM_PRESET = "custom";
+		/**
 		 * How many per-session failures a bulk run spells out before summarizing.
 		 *
 		 * A failed switch is worth naming — "3 failed" without saying which is not
@@ -602,6 +682,13 @@ window.__ModuleLoader__.load({
 			"read-only": "wpPresetReadOnly",
 			"workspace-write": "wpPresetWorkspaceWrite",
 			[FULL_ACCESS_PRESET]: "wpPresetFullAccess",
+			/*
+			 * `custom` is derived, never configured — the Host omits it from the
+			 * catalog, so a row whose knobs match no preset has a current value
+			 * the dropdown cannot find an option for. It is still a real, current
+			 * value and must be named, not rendered as "unavailable".
+			 */
+			custom: "wpCustom",
 		};
 		/** Turn a kebab-case preset key into Title Case for unknown table entries. */
 		function titleCasePreset(name) {
@@ -644,6 +731,18 @@ window.__ModuleLoader__.load({
 			order: [],
 			byId: Object.create(null),
 			archived: [],
+			/**
+			 * Workspace rows, in Host order.
+			 *
+			 * The same `remote.workspace.follow` stream that carries the archive
+			 * set also carries the complete Workspace projection — id, path,
+			 * title, and the authoritative `sessionIds` membership list. The panel
+			 * groups rows with that membership rather than guessing from `cwd`:
+			 * `cwd` is a path a Session ran in, not a statement about which
+			 * Workspace owns it (a Session can be moved between Workspaces, and
+			 * two Workspaces can share a path only by being the same one).
+			 */
+			workspaces: [],
 			version: 0,
 			notify() {
 				this.version += 1;
@@ -702,6 +801,8 @@ window.__ModuleLoader__.load({
 					 */
 					preset: preset === null && known !== void 0 ? known.preset : preset,
 					read: preset === null ? "idle" : "ready",
+					/* Keep the in-flight read token so a stale answer cannot land. */
+					readToken: known !== void 0 ? (known.readToken ?? 0) : 0,
 				};
 			}
 			sessionCatalog.order = order;
@@ -738,13 +839,13 @@ window.__ModuleLoader__.load({
 				if (value === null) throw new Error(describe(response !== null && typeof response === "object" ? response.error : response));
 				adoptSessionItems(Array.isArray(value.items) ? value.items : []);
 				/*
-				 * NOT awaited. `followArchiveSet` consumes a stream that stays open for
-				 * the life of the page, so awaiting it never resolves — the `finally`
+				 * NOT awaited. `followWorkspaceState` consumes a stream that stays open
+				 * for the life of the page, so awaiting it never resolves — the `finally`
 				 * below would never run, `catalogLoading` would stay true forever, and
 				 * every later refresh would be short-circuited by the guard above.
 				 * That is exactly the "refresh button does nothing" bug.
 				 */
-				followArchiveSet().catch(() => {});
+				followWorkspaceState().catch(() => {});
 			} catch (cause) {
 				sessionCatalog.status = "error";
 				sessionCatalog.error = describe(cause);
@@ -755,33 +856,102 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Consume `remote.workspace.follow` for the archive set.
+		 * Normalize one Workspace projection.
+		 *
+		 * A Workspace view is `{ workspaceId, path, title, sessionIds, createdAt,
+		 * updatedAt }`. The panel needs the identity, the display fields, and the
+		 * authoritative membership list — nothing else is invented. `sessionIds` is
+		 * a real statement about ownership; `cwd` is not (see `groupRowsByWorkspace`).
+		 * @param raw - one Workspace projection from the Host.
+		 * @returns a normalized row, or null when the value is not a Workspace.
+		 */
+		function normalizeWorkspace(raw) {
+			if (raw === null || typeof raw !== "object" || typeof raw.workspaceId !== "string" || raw.workspaceId === "") return null;
+			return {
+				id: raw.workspaceId,
+				path: typeof raw.path === "string" ? raw.path : "",
+				title: typeof raw.title === "string" ? raw.title : "",
+				sessionIds: Array.isArray(raw.sessionIds) ? raw.sessionIds.filter((id) => typeof id === "string") : [],
+			};
+		}
+
+		/** Normalize a list of Workspace projections, dropping anything malformed. */
+		function normalizeWorkspaces(items) {
+			if (!Array.isArray(items)) return [];
+			const out = [];
+			for (const item of items) {
+				const row = normalizeWorkspace(item);
+				if (row !== null) out.push(row);
+			}
+			return out;
+		}
+
+		/**
+		 * Consume `remote.workspace.follow` for the archive set AND the Workspace rows.
+		 *
+		 * Both live on the same stream, and the panel needs both: the archive set
+		 * keeps rows the Host refuses to act on out of the list, and the Workspace
+		 * rows are what the list is *grouped* by. Reading only `archivedSessionIds`
+		 * out of the baseline (as the first version did) threw away the grouping
+		 * data the Host had already delivered.
 		 *
 		 * Fail-open on purpose: an unreadable archive state must never hide rows
 		 * the user can still act on. A row that turns out to be archived is a
 		 * harmless no-op — the Host refuses the command and the panel says so.
+		 * The same is true of grouping: without the stream every session simply
+		 * lands in the ungrouped bucket, which is still a complete, usable list.
 		 */
-		async function followArchiveSet() {
+		async function followWorkspaceState() {
 			const namespaces = remoteRef;
 			if (namespaces === null || namespaces.workspace === void 0 || typeof namespaces.workspace.follow !== "function") return;
 			if (archiveAbort !== null) return;
 			const controller = new AbortController();
 			archiveAbort = controller;
-			const adopt = (ids) => {
-				sessionCatalog.archived = Array.isArray(ids) ? ids : [];
+			/** Replace the archive set and Workspace rows from one complete projection. */
+			const adoptProjection = (value) => {
+				const projection = value !== null && typeof value === "object" ? value : {};
+				sessionCatalog.archived = Array.isArray(projection.archivedSessionIds) ? projection.archivedSessionIds : [];
+				sessionCatalog.workspaces = normalizeWorkspaces(projection.items);
+				sessionCatalog.notify();
+			};
+			/** Merge one `upsert` frame; Host rows are keyed by workspaceId. */
+			const upsertWorkspace = (raw) => {
+				const row = normalizeWorkspace(raw);
+				if (row === null) return;
+				const next = sessionCatalog.workspaces.slice();
+				const at = next.findIndex((entry) => entry.id === row.id);
+				/* A new Workspace is inserted at the front; an `order` frame follows. */
+				if (at < 0) next.unshift(row);
+				else next[at] = row;
+				sessionCatalog.workspaces = next;
 				sessionCatalog.notify();
 			};
 			try {
 				for await (const frame of namespaces.workspace.follow(controller.signal)) {
 					if (frame === null || typeof frame !== "object") continue;
 					if (frame.type === "baseline" || frame.type === "replace") {
-						adopt(frame.value !== void 0 && frame.value !== null ? frame.value.archivedSessionIds : void 0);
+						adoptProjection(frame.value);
 					} else if (frame.type === "archived") {
-						adopt(frame.archivedSessionIds);
+						sessionCatalog.archived = Array.isArray(frame.archivedSessionIds) ? frame.archivedSessionIds : [];
+						sessionCatalog.notify();
+					} else if (frame.type === "upsert") {
+						upsertWorkspace(frame.workspace);
+					} else if (frame.type === "remove") {
+						sessionCatalog.workspaces = sessionCatalog.workspaces.filter((entry) => entry.id !== frame.workspaceId);
+						sessionCatalog.notify();
+					} else if (frame.type === "order") {
+						/*
+						 * The order frame carries ids only, and it is authoritative for
+						 * display order. Workspaces the panel never saw stay at the end
+						 * in arrival order rather than being dropped.
+						 */
+						const rank = new Map((Array.isArray(frame.workspaceIds) ? frame.workspaceIds : []).map((id, index) => [id, index]));
+						sessionCatalog.workspaces = sessionCatalog.workspaces.slice().sort((left, right) => (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER));
+						sessionCatalog.notify();
 					}
 				}
 			} catch {
-				/* Aborted on dispose, or the carrier does not stream: keep empty. */
+				/* Aborted on dispose, or the carrier does not stream: keep what arrived. */
 			} finally {
 				if (archiveAbort === controller) archiveAbort = null;
 			}
@@ -823,8 +993,104 @@ window.__ModuleLoader__.load({
 						projectionRead: row.read,
 					};
 				}
-				return { ids: sessionCatalog.order, current: null, byId };
+				return { ids: sessionCatalog.order, current: null, byId, workspaces: sessionCatalog.workspaces };
 			}, [version]);
+		}
+
+		/**
+		 * Subscribe React to the Workspace rows carried by `workspace.follow`.
+		 *
+		 * Returns the same array reference until a frame replaces it, so a memoized
+		 * grouping pass can key on identity instead of deep-comparing every render.
+		 * @returns the ordered Workspace rows, possibly empty.
+		 */
+		function useWorkspaces() {
+			const version = React.useSyncExternalStore(
+				(listener) => {
+					sessionCatalogListeners.add(listener);
+					return () => {
+						sessionCatalogListeners.delete(listener);
+					};
+				},
+				() => sessionCatalog.version,
+			);
+			return React.useMemo(() => {
+				void version;
+				return sessionCatalog.workspaces;
+			}, [version]);
+		}
+
+		/** Group key of the bucket that holds sessions no Workspace accounts for. */
+		const UNGROUPED_GROUP_KEY = "\u0000ungrouped";
+
+		/**
+		 * Split rows into Workspace groups, plus an ungrouped bucket when needed.
+		 *
+		 * MEMBERSHIP COMES FROM `workspace.sessionIds`, NOT from `cwd`. They are
+		 * different facts and they disagree routinely: `cwd` is a path a Session ran
+		 * in, while `sessionIds` is the registry's statement about which Workspace
+		 * owns the Session. A session created in the default directory but filed
+		 * under another Workspace has one `cwd` and a different owner; grouping by
+		 * `cwd` would silently put it under the wrong heading, and a bulk change
+		 * made from there would hit the wrong "workspace".
+		 *
+		 * Workspaces with no manageable member are dropped: an empty heading is
+		 * noise in a panel that exists to act on sessions. When there is nothing to
+		 * separate — no Workspaces at all, or a single ungrouped bucket — the caller
+		 * renders a flat list instead of one meaningless header.
+		 * @param rows - normalized, already-filtered permission rows.
+		 * @param workspaces - Host Workspace rows in display order.
+		 * @returns groups in Host order, ungrouped last.
+		 */
+		function groupRowsByWorkspace(rows, workspaces) {
+			if (workspaces.length === 0) {
+				return rows.length === 0 ? [] : [{ key: UNGROUPED_GROUP_KEY, workspaceId: void 0, title: "", path: "", sessions: rows }];
+			}
+			const byId = new Map(rows.map((row) => [row.id, row]));
+			const seen = new Set();
+			const groups = [];
+			for (const workspace of workspaces) {
+				const members = [];
+				for (const id of workspace.sessionIds) {
+					const row = byId.get(id);
+					if (row === void 0 || seen.has(id)) continue;
+					seen.add(id);
+					members.push(row);
+				}
+				if (members.length === 0) continue;
+				groups.push({ key: workspace.id, workspaceId: workspace.id, title: workspace.title, path: workspace.path, sessions: members });
+			}
+			const stray = rows.filter((row) => !seen.has(row.id));
+			if (stray.length > 0) groups.push({ key: UNGROUPED_GROUP_KEY, workspaceId: void 0, title: "", path: "", sessions: stray });
+			return groups;
+		}
+
+		/** Whether one row matches the search box, including its Workspace's identity. */
+		function rowMatchesQuery(row, group, query) {
+			const haystack = [row.title, row.subtitle, group.title, group.path];
+			for (const value of haystack) {
+				if (typeof value === "string" && value !== "" && value.toLowerCase().includes(query)) return true;
+			}
+			return false;
+		}
+
+		/**
+		 * Which Session this panel is talking about.
+		 *
+		 * A focused id wins outright: the session-header entry is rendered inside
+		 * exactly one Session, so there is nothing to infer.
+		 *
+		 * The Settings page has no such anchor. 0.2.1 exposes no supported way to ask
+		 * "which session is in the main view" from a client plugin — the `sessions`
+		 * list store was removed, and guessing from "the newest row" would be wrong
+		 * often enough to be worse than saying nothing. So there the panel states
+		 * that the section needs a Session and shows the per-session rows instead;
+		 * returning null is the honest answer, not a failure.
+		 * @param focus - id supplied by the session-scoped slot, when available.
+		 * @returns the focused id, or null when this render has no Session anchor.
+		 */
+		function useCurrentSessionId(focus) {
+			return typeof focus === "string" && focus !== "" ? focus : null;
 		}
 
 		/**
@@ -851,7 +1117,17 @@ window.__ModuleLoader__.load({
 		 * permission service", and "the read failed".
 		 * @param id - session to read projections for.
 		 */
-		function ensureProjections(id) {
+		/**
+		 * Read one session's projections. `force` re-reads a row that is not idle.
+		 *
+		 * A forced read is what makes "actual effect" trustworthy: the panel's own
+		 * record of a switch (`recordSessionPreset`) is the panel's belief, while a
+		 * cold read answers from the Session's own log. Only a read can show a change
+		 * made elsewhere, and only a read can confirm the one just made.
+		 * @param id - session to read projections for.
+		 * @param force - re-read regardless of the recorded read state.
+		 */
+		function readSessionProjections(id, force) {
 			const namespaces = remoteRef;
 			if (namespaces === null || namespaces.session === void 0 || typeof namespaces.session.projections !== "function") return;
 			const entry = sessionCatalog.byId[id];
@@ -863,9 +1139,18 @@ window.__ModuleLoader__.load({
 			 * that comes back without a hint resets the row to `idle` (see
 			 * adoptSessionItems), which is what makes the refresh button able to retry.
 			 */
-			if (entry === void 0 || entry.read !== "idle") return;
+			if (entry === void 0 || (force !== true && entry.read !== "idle")) return;
+			/*
+			 * Reads are token-guarded: a forced re-read can overlap an idle read, and
+			 * the slower answer must not overwrite the newer one. The token lives on
+			 * the entry, so `adoptSessionItems` carries it forward.
+			 */
+			const token = (entry.readToken ?? 0) + 1;
+			entry.readToken = token;
 			entry.read = "loading";
+			sessionCatalog.notify();
 			Promise.resolve(namespaces.session.projections({ sessionId: id }, void 0)).then((response) => {
+				if (entry.readToken !== token) return;
 				const value = response !== null && typeof response === "object" && response.ok === true ? response.value : null;
 				if (value === null || typeof value !== "object") {
 					/* `null` means the Host has no such Session (it vanished under us). */
@@ -886,9 +1171,27 @@ window.__ModuleLoader__.load({
 				entry.read = preset === null ? "empty" : "ready";
 				sessionCatalog.notify();
 			}).catch(() => {
+				if (entry.readToken !== token) return;
 				entry.read = "error";
 				sessionCatalog.notify();
 			});
+		}
+
+		/** Idle-only projection read for a row the list answered without a hint. */
+		function ensureProjections(id) {
+			readSessionProjections(id, false);
+		}
+
+		/**
+		 * Forced projection read for the session whose policy is on display.
+		 *
+		 * Deliberately not the same call as `ensureProjections`: the panel's own
+		 * recorded value is not evidence about the Host, and the whole point of the
+		 * "actual effect" card is to show what the Host says.
+		 * @param id - session to re-read from its own log.
+		 */
+		function refreshSessionProjection(id) {
+			readSessionProjections(id, true);
 		}
 
 		/**
@@ -1156,6 +1459,13 @@ window.__ModuleLoader__.load({
 				loadSessionCatalog().catch(() => {});
 			});
 
+			/*
+			 * The Client sessions service is deliberately NOT injected. 0.2.1 removed
+			 * the `sessions.list` snapshot store and `test/host-api.cjs` forbids asking
+			 * for it; the panel's Session anchor comes from the slot props instead (see
+			 * useCurrentSessionId).
+			 */
+
 			/* Abort the archive stream when this plugin's fiber goes away. */
 			ctx.effect(() => () => {
 				if (archiveAbort !== null) {
@@ -1375,7 +1685,20 @@ window.__ModuleLoader__.load({
 					const value = response.value;
 					const readOptions = (raw) => (Array.isArray(raw) ? raw : [])
 						.filter((option) => option !== null && typeof option === "object" && typeof option.value === "string")
-						.map((option) => ({ value: option.value, name: typeof option.name === "string" ? option.name : option.value }));
+						/*
+						 * `description` is the Host's own prose about what the preset
+						 * actually does (which sandbox and which approval policy). It is
+						 * the ONLY client-visible statement of that: the sandbox mode and
+						 * approval policy live in Host-only session projections with no
+						 * wire, and the preset name is a deployment-chosen label that must
+						 * not be parsed back into modes. Keep it, so the current-session
+						 * card can show the policy in the Host's words instead of guessing.
+						 */
+						.map((option) => {
+							const row = { value: option.value, name: typeof option.name === "string" ? option.name : option.value };
+							if (typeof option.description === "string" && option.description !== "") row.description = option.description;
+							return row;
+						});
 					this.catalog = readOptions(value !== null && typeof value === "object" ? value.options : void 0);
 					/*
 					 * `defaultOptions` is a distinct field, not a synonym for `options`.
@@ -1648,6 +1971,21 @@ window.__ModuleLoader__.load({
 				const btnRef = React.useRef(null);
 				const menuRef = React.useRef(null);
 				const current = options.find((option) => option.value === value);
+				/*
+				 * A CURRENT value the catalog does not offer.
+				 *
+				 * `custom` is the Host's derived "these knobs match no preset"
+				 * state: it is a legitimate current value that can never be a menu
+				 * row (the Host refuses to persist it). Without this the trigger
+				 * fell through to the placeholder and rendered "不可用" for a
+				 * perfectly readable policy — the exact ambiguity the panel exists
+				 * to remove. Display-only: the menu still lists only `options`.
+				 */
+				const shown = current !== void 0
+					? current
+					: typeof value === "string" && value !== ""
+						? { value, label: presetLabel(value, t) }
+						: void 0;
 				React.useLayoutEffect(() => {
 					if (!open) {
 						setPos(null);
@@ -1699,8 +2037,8 @@ window.__ModuleLoader__.load({
 				"aria-expanded": open,
 				onClick: () => setOpen(!open),
 			}, [
-				current !== void 0 ? React.createElement("span", { key: "dot" }, presetMark(current.value)) : null,
-				React.createElement("span", { className: "dshk-wpValue", key: "v" }, current !== void 0 ? current.label : (typeof placeholder === "string" ? placeholder : t("wpUnavailable"))),
+				shown !== void 0 ? React.createElement("span", { key: "dot" }, presetMark(shown.value)) : null,
+				React.createElement("span", { className: "dshk-wpValue", key: "v" }, shown !== void 0 ? shown.label : (typeof placeholder === "string" ? placeholder : t("wpUnavailable"))),
 				React.createElement(ChevronDown, { className: "dshk-chevron" + (open ? " dshk-chevronOpen" : ""), key: "c" }),
 			]);
 			const portalHost = typeof document === "undefined" ? null : document.body;
@@ -1736,11 +2074,29 @@ window.__ModuleLoader__.load({
 			const { t } = props;
 			const sessions = useSessions();
 			const archivedIds = useArchivedIds();
+			const workspaces = useWorkspaces();
+			/*
+			 * The session this panel was opened for. A session-header entry always
+			 * knows its session; the Settings page has no anchor and says so (see
+			 * `useCurrentSessionId`). Null is a normal answer, not a failure.
+			 */
+			const currentSessionId = useCurrentSessionId(props.focusSessionId);
 			usePermissionPanel();
 			const panel = permissionPanel;
 			const [gate, setGate] = React.useState(null);
 			const [acknowledged, setAcknowledged] = React.useState(false);
 			const [problem, setProblem] = React.useState(null);
+			/** Current text of the session filter box. */
+			const [query, setQuery] = React.useState("");
+			/**
+			 * Group keys the user expanded. EMPTY MEANS EVERYTHING COLLAPSED —
+			 * the reverse of the previous field, because "collapsed by default"
+			 * cannot be expressed by seeding a collapsed-set with keys that are
+			 * only discovered at render time (a workspace that arrives later
+			 * would silently default to open). Absence = collapsed handles both
+			 * the first paint and any workspace the host adds afterwards.
+			 */
+			const [expandedGroups, setExpandedGroups] = React.useState(() => new Set());
 			/** Ids ticked for a bulk change; cleared after a successful run. */
 			const [selected, setSelected] = React.useState(() => new Set());
 			/** Chosen preset in the bulk bar; null until the user picks one. */
@@ -1851,7 +2207,7 @@ window.__ModuleLoader__.load({
 							? t("wpReading")
 							: summary.projectionRead === "error" ? t("wpReadFailed") : t("wpNoProjection");
 					const tags = [];
-					if (summary.id === sessions.current) tags.push(t("wpCurrent"));
+					if (summary.id === currentSessionId) tags.push(t("wpCurrent"));
 					if (summary.running === true) tags.push({ node: true, key: "run" });
 					out.push({
 						id: summary.id,
@@ -1872,7 +2228,7 @@ window.__ModuleLoader__.load({
 				}
 				out.sort((a, b) => a.title.localeCompare(b.title));
 				return out;
-			}, [sessions, t, panel.catalog, panel.version, archivedIds]);
+			}, [sessions, t, panel.catalog, panel.version, archivedIds, currentSessionId]);
 
 			/**
 			 * How many sessions the archive filter removed from the list.
@@ -1892,28 +2248,124 @@ window.__ModuleLoader__.load({
 				return count;
 			}, [sessions, archivedIds]);
 
-			/** Rows that can actually be acted on, i.e. the only ones worth offering. */
+			/*
+			 * Search and grouping, in that order.
+			 *
+			 * The search box exists because the list is long, and the groups exist
+			 * because a flat list of every session in every Workspace is hard to scan
+			 * even when it fits. Filtering runs before grouping so a group header
+			 * never claims sessions that are currently hidden; a group with no
+			 * matching session is dropped rather than shown empty.
+			 */
+			const normalizedQuery = query.trim().toLowerCase();
+			const groups = React.useMemo(() => {
+				const built = groupRowsByWorkspace(rows, workspaces);
+				if (normalizedQuery === "") return built;
+				const filtered = [];
+				for (const group of built) {
+					const matched = group.sessions.filter((row) => rowMatchesQuery(row, group, normalizedQuery));
+					if (matched.length > 0) filtered.push({ ...group, sessions: matched });
+				}
+				return filtered;
+			}, [rows, workspaces, normalizedQuery]);
+
+			/** Rows currently visible after filtering; the universe bulk actions act on. */
+			const visibleRows = React.useMemo(() => {
+				const out = [];
+				for (const group of groups) for (const row of group.sessions) out.push(row);
+				return out;
+			}, [groups]);
+
+			/** Whether to draw group headers at all: one ungrouped bucket is a flat list. */
+			const grouped = groups.length > 1 || (groups.length === 1 && groups[0].workspaceId !== void 0);
+
+			/*
+			 * Workspaces that contributed no row and therefore no heading.
+			 *
+			 * Counted from the UNFILTERED rows: a workspace whose members are all
+			 * subagents, archived, or simply not listed would otherwise vanish without
+			 * a trace, and a missing "Alpha" heading reads as "my workspace is gone"
+			 * rather than "nothing in it can be managed here". Counting after the
+			 * search filter would instead report the user's own typing as hidden data.
+			 */
+			const hiddenWorkspaceCount = React.useMemo(() => {
+				if (workspaces.length === 0) return 0;
+				const present = new Set(rows.map((row) => row.id));
+				let hidden = 0;
+				for (const workspace of workspaces) {
+					if (!workspace.sessionIds.some((id) => present.has(id))) hidden += 1;
+				}
+				return hidden;
+			}, [rows, workspaces]);
+
+			/** Selectable rows in the current filter result, folded or not. */
 			const selectableRows = React.useMemo(
-				() => rows.filter((row) => row.capable === true),
-				[rows],
+				() => visibleRows.filter((row) => row.capable === true),
+				[visibleRows],
 			);
 
 			/*
-			 * Prune the selection against the CURRENT row set.
+			 * Selectable rows the user can actually SEE, i.e. inside an open group.
 			 *
-			 * A ticked id can disappear (session removed, archived, or its projection
-			 * failed to load). Left alone, the bulk bar would keep claiming "3 selected"
-			 * for rows that no longer exist, and "apply to selected" would silently target
-			 * fewer sessions than the user believes. Intersecting on read keeps the count
-			 * honest without needing a cleanup effect racing the render.
+			 * The list-wide select-all governs only these. Folding a group must not
+			 * turn "select all" into a way to tick rows the user just tidied away:
+			 * the group header still offers its own select-all, scoped to that named
+			 * Workspace, but the global control stays honest about what is on screen.
+			 * In flat mode (no Workspaces) nothing folds, so every row counts.
+			 */
+			const openSelectableRows = React.useMemo(() => {
+				if (grouped !== true) return selectableRows;
+				const out = [];
+				for (const group of groups) {
+					if (normalizedQuery === "" && !expandedGroups.has(group.key)) continue;
+					for (const row of group.sessions) if (row.capable === true) out.push(row);
+				}
+				return out;
+			}, [grouped, groups, normalizedQuery, expandedGroups, selectableRows]);
+
+			/*
+			 * Prune the selection against the CURRENT visible row set.
+			 *
+			 * A ticked id can disappear (session removed, archived, its projection
+			 * failed to load, or the search box now hides it). Left alone, the bulk
+			 * bar would keep claiming "3 selected" for rows that no longer exist, and
+			 * "apply to selected" would silently target fewer sessions than the user
+			 * believes. Intersecting on read keeps the count honest without needing a
+			 * cleanup effect racing the render.
 			 */
 			const effectiveSelection = React.useMemo(() => {
 				const live = new Set(selectableRows.map((row) => row.id));
 				return new Set([...selected].filter((id) => live.has(id)));
 			}, [selected, selectableRows]);
 
+			/*
+			 * Drop ticks the filter hides, so clearing the box never resurfaces a
+			 * selection the user could not see. "Select all" must mean "what is on
+			 * screen right now" — an invisible selection is one bulk Apply away from
+			 * changing a session the user thought they had excluded.
+			 *
+			 * FOLDING IS NOT FILTERING. Keyed on `selectableRows`, not on the open
+			 * groups: collapsing a Workspace to tidy the list must not silently
+			 * discard ticks the user placed there on purpose. Those stay visible as
+			 * a count on the group header and remain in the bulk bar.
+			 */
+			const visibleSelectableKey = selectableRows.map((row) => row.id).join("\n");
+			React.useEffect(() => {
+				setSelected((previous) => {
+					const live = new Set(visibleSelectableKey === "" ? [] : visibleSelectableKey.split("\n"));
+					const next = new Set();
+					let dropped = false;
+					for (const id of previous) {
+						if (live.has(id)) next.add(id);
+						else dropped = true;
+					}
+					return dropped ? next : previous;
+				});
+			}, [visibleSelectableKey]);
+
 			const selectedCount = effectiveSelection.size;
-			const allSelected = selectableRows.length > 0 && selectedCount === selectableRows.length;
+			const allSelected = openSelectableRows.length > 0 && openSelectableRows.every((row) => effectiveSelection.has(row.id));
+			const someSelected = selectedCount > 0 && !allSelected;
 
 			/** Toggle one row's membership. */
 			const toggleSelected = (id) => {
@@ -1925,8 +2377,59 @@ window.__ModuleLoader__.load({
 				});
 			};
 
-			const toggleAll = () => {
-				setSelected(() => (allSelected ? new Set() : new Set(selectableRows.map((row) => row.id))));
+			/** Fold or unfold one Workspace group. */
+			const toggleGroup = (key) => {
+				setExpandedGroups((previous) => {
+					const next = new Set(previous);
+					if (next.has(key)) next.delete(key);
+					else next.add(key);
+					return next;
+				});
+			};
+
+			/**
+			 * Unfold every group, or fold them all back.
+			 *
+			 * The companion of default-collapsed: without it, a user with ten
+			 * Workspaces would click ten chevrons to see their sessions once.
+			 * @param open - true to expand every group, false to collapse every group.
+			 */
+			const setAllGroups = (open) => {
+				setExpandedGroups(() => (open ? new Set(groups.map((group) => group.key)) : new Set()));
+			};
+
+			/*
+			 * Keep the displayed policy honest: re-read the current session's
+			 * projection every time the panel opens for it.
+			 *
+			 * The row value comes from a list hint, a previous cold read, or this
+			 * panel's own optimistic record. None of those is evidence about what the
+			 * Host is enforcing right now, and "改完心里没底" is precisely the doubt
+			 * this card exists to answer. The forced read is authoritative.
+			 */
+			React.useEffect(() => {
+				if (currentSessionId === null) return;
+				refreshSessionProjection(currentSessionId);
+			}, [currentSessionId, sessionKey]);
+
+			/**
+			 * Set one group's (or the whole list's) selectable rows on or off.
+			 *
+			 * Undetermined checkboxes turn everything ON: a click on a partly ticked
+			 * box is a request for "all", and the same rule works for both levels.
+			 * @param members - selectable rows this control governs.
+			 */
+			const toggleSelection = (members) => {
+				const ids = members.map((row) => row.id);
+				const allOn = ids.length > 0 && ids.every((id) => effectiveSelection.has(id));
+				setSelected((previous) => {
+					const next = new Set(previous);
+					for (const id of ids) {
+						if (allOn) next.delete(id);
+						else next.add(id);
+					}
+					return next;
+				});
 			};
 
 			/*
@@ -1952,6 +2455,12 @@ window.__ModuleLoader__.load({
 					return false;
 				}
 				recordSessionPreset(row.id, preset);
+				/*
+				 * A successful command is not proof of the resulting value: the card
+				 * claims "actual effect", so re-read the session the user is looking
+				 * at instead of trusting the record we just wrote ourselves.
+				 */
+				if (row.id === currentSessionId) refreshSessionProjection(row.id);
 				notify(text("wpApplied") + presetLabel(preset, t));
 				return true;
 			};
@@ -1984,6 +2493,9 @@ window.__ModuleLoader__.load({
 						const result = await dispatchCommand(panel.remoteCommands, row.id, "/permission " + preset);
 						if (result.ok) { recordSessionPreset(row.id, preset); changed += 1; }
 						else failures.push(row.title + ": " + result.message);
+					}
+					if (currentSessionId !== null && targets.some((row) => row.id === currentSessionId)) {
+						refreshSessionProjection(currentSessionId);
 					}
 				} finally {
 					setBulkBusy(false);
@@ -2087,8 +2599,151 @@ window.__ModuleLoader__.load({
 			const defaultState = panel.status === "error"
 				? text("wpLoadFailed") + (panel.error ?? "")
 				: panel.status === "unavailable" ? text("wpDefaultUnavailable") : null;
+
+			/*
+			 * The current session's row and its policy note.
+			 *
+			 * The preset is the Host's own answer (the forced read above keeps it
+			 * fresh); the note is the catalog's `description`, i.e. the Host's prose
+			 * about what that preset means. When the value is `custom` the Host has no
+			 * catalog row to describe it, and when a deployment omits descriptions
+			 * there is nothing to show — both are said out loud rather than papered
+			 * over with a guess. There is deliberately NO switch control here: the ask
+			 * was to SEE what is in effect, and a second dropdown for the same session
+			 * would duplicate the one in the row below.
+			 */
+			const currentRow = currentSessionId === null ? void 0 : rows.find((row) => row.id === currentSessionId);
+			const currentOption = currentRow === void 0 || currentRow.current === null
+				? void 0
+				: panel.catalog.find((option) => option.value === currentRow.current);
+			let currentPolicy = null;
+			if (currentRow !== void 0) {
+				if (currentRow.current === null) currentPolicy = currentRow.placeholder ?? t("wpUnavailable");
+				else if (currentOption !== void 0 && typeof currentOption.description === "string" && currentOption.description !== "") currentPolicy = currentOption.description;
+				else if (currentRow.current === CUSTOM_PRESET) currentPolicy = t("wpPolicyCustom");
+				else if (panel.catalogStatus === "loading") currentPolicy = t("wpReading");
+				else currentPolicy = t("wpPolicyUnknown");
+			}
+
+			/** Deterministic class for a tri-state checkbox's indeterminate look. */
+			const markIndeterminate = (partial) => (node) => {
+				if (node !== null && node !== void 0 && typeof node === "object" && "indeterminate" in node) node.indeterminate = partial === true;
+			};
+
+			/**
+			 * Build one group's header + rows.
+			 *
+			 * The header is a disclosure control, not a table row: collapsing is what
+			 * makes a long list short, and the per-group checkbox is what makes "select
+			 * this whole workspace" one click instead of N.
+			 * @param group - one entry from `groupRowsByWorkspace`, already filtered.
+			 */
+			const renderGroup = (group) => {
+				/*
+				 * Folded by default; a search forces every hit open, because a
+				 * collapsed group with invisible matches would read as "no results".
+				 */
+				const expanded = normalizedQuery !== "" || expandedGroups.has(group.key);
+				const groupSelectable = group.sessions.filter((row) => row.capable === true);
+				const groupSelected = groupSelectable.filter((row) => effectiveSelection.has(row.id)).length;
+				const groupAll = groupSelectable.length > 0 && groupSelected === groupSelectable.length;
+				const groupPartial = groupSelected > 0 && !groupAll;
+				const label = group.workspaceId === void 0 ? t("wpGroupUngrouped") : (group.title !== "" ? group.title : group.path);
+				const header = React.createElement("div", { className: "dshk-wpGroupHead", key: "gh" }, [
+					React.createElement("button", {
+						key: "toggle",
+						type: "button",
+						className: "dshk-wpGroupToggle",
+						"aria-expanded": expanded,
+						title: expanded ? t("wpCollapseGroup").replace("{name}", label) : t("wpExpandGroup").replace("{name}", label),
+						onClick: () => toggleGroup(group.key),
+					}, React.createElement(ChevronDown, { className: "dshk-chevron" + (expanded ? "" : " dshk-chevronCollapsed") })),
+					React.createElement("span", { key: "title", className: "dshk-wpGroupTitle", title: label }, label),
+					group.path !== "" && group.workspaceId !== void 0 ? React.createElement("span", { key: "path", className: "dshk-wpGroupPath", title: group.path }, group.path) : null,
+					React.createElement("span", { key: "count", className: "dshk-wpGroupCount" }, t("wpGroupCount").replace("{n}", String(group.sessions.length))),
+					/*
+					 * Ticks made inside a group stay on the header when it folds:
+					 * otherwise a folded group is a black box that still feeds the
+					 * bulk bar, and the user cannot tell why the count says 3.
+					 */
+					groupSelected > 0 ? React.createElement("span", { key: "picked", className: "dshk-wpGroupPicked" }, t("wpGroupSelected").replace("{n}", String(groupSelected))) : null,
+					/*
+					 * Group-level select-all. Offered only when the group has something
+					 * actionable; the browser's own tri-state look comes from the ref,
+					 * and `aria-checked` carries it for assistive tech.
+					 */
+					groupSelectable.length > 0 ? React.createElement("label", { key: "select", className: "dshk-pickAllBox", title: t("wpSelectGroup") }, [
+						React.createElement("input", {
+							key: "box",
+							type: "checkbox",
+							className: "dshk-pickAllGroup",
+							checked: groupAll,
+							ref: markIndeterminate(groupPartial),
+							"aria-label": t("wpSelectGroup"),
+							"aria-checked": groupPartial ? "mixed" : groupAll,
+							onChange: () => toggleSelection(groupSelectable),
+						}),
+					]) : null,
+				]);
+				const body = expanded
+					? React.createElement("div", { className: "dshk-wpGroupBody", key: "gb" }, group.sessions.map((row) => React.createElement(PermissionRow, {
+						key: row.id,
+						t,
+						title: row.title,
+						subtitle: row.subtitle,
+						tags: row.tags,
+						value: row.current,
+						options: row.options,
+						placeholder: row.placeholder,
+						disabled: row.capable !== true,
+						onSwitch: (preset) => switchSession(row, preset),
+						/* Selection is offered only for rows that can actually be changed. */
+						selectable: row.capable === true,
+						selected: effectiveSelection.has(row.id),
+						onToggle: () => toggleSelected(row.id),
+					})))
+					: null;
+				return React.createElement("div", { className: "dshk-wpGroup", key: "g:" + group.key }, [header, body]);
+			};
+
+			const currentCard = currentRow === void 0 ? null : React.createElement("div", { className: "dshk-card dshk-current", key: "current" }, [
+				React.createElement("div", { className: "dshk-wpHead", key: "head" }, React.createElement("div", { className: "dshk-currentRow" }, [
+					avatarOf(currentRow.title),
+					React.createElement("div", { className: "dshk-currentCopy", key: "copy" }, [
+						React.createElement("h4", { key: "h" }, t("wpCurrentSection")),
+						React.createElement("div", { className: "dshk-hint", key: "who" }, t("wpCurrentSubject") + currentRow.title),
+					]),
+					React.createElement("span", {
+						className: "dshk-wpChip",
+						key: "chip",
+						/* The chip is the Host's value, and the tooltip says where it came from. */
+						title: t("wpEffective") + " · " + t("wpCurrentLive"),
+					}, currentRow.current === null ? (currentRow.placeholder ?? t("wpUnavailable")) : presetLabel(currentRow.current, t)),
+					/*
+					 * Read-again, on demand. The panel force-reads on open and after a
+					 * switch, but a policy can also change outside this panel; a reader
+					 * who wants reassurance now should not have to close and reopen the
+					 * dialog to get it.
+					 */
+					React.createElement("button", {
+						type: "button",
+						className: "dshk-btn",
+						key: "reread",
+						title: t("wpCurrentLive"),
+						onClick: () => refreshSessionProjection(currentRow.id),
+					}, t("wpCurrentRefresh")),
+				])),
+				currentPolicy === null ? null : React.createElement("div", { className: "dshk-hint dshk-currentPolicy", key: "policy" }, currentPolicy),
+			]);
+
 			return React.createElement("div", { className: "dshk-page" }, [
 				React.createElement("p", { className: "dshk-intro", key: "intro" }, t("wpIntro")),
+				/*
+				 * With no Session anchor (the Settings page), say why the card is absent
+				 * rather than silently dropping the section: a user who came here looking
+				 * for "what is in effect right now" needs a direction, not a missing card.
+				 */
+				currentCard ?? React.createElement("div", { className: "dshk-hint dshk-currentHint", key: "currentHint" }, t("wpCurrentUnknown")),
 				React.createElement("div", { className: "dshk-card", key: "default" }, [
 					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
 						React.createElement("h4", { key: "h" }, t("wpDefaultSection")),
@@ -2107,18 +2762,9 @@ window.__ModuleLoader__.load({
 				React.createElement("div", { className: "dshk-card", key: "sessions" }, [
 					React.createElement("div", { className: "dshk-wpHead", key: "head" }, [
 						React.createElement("div", { className: "dshk-wpHeadMain", key: "hmain" }, [
-							/*
-							 * Select-all lives beside the heading, and only when there is
-							 * something selectable: a disabled checkbox over an empty or
-							 * entirely unreadable list is noise that promises nothing.
-							 */
-							selectableRows.length > 0 ? React.createElement("label", { className: "dshk-pickAll", key: "all", title: t("wpSelectAll") }, React.createElement("input", {
-								type: "checkbox",
-								checked: allSelected,
-								"aria-label": t("wpSelectAll"),
-								onChange: toggleAll,
-							})) : null,
-							React.createElement("h4", { key: "h" }, t("wpSessionSection") + " · " + t("wpCount") + rows.length),
+							React.createElement("h4", { key: "h" }, normalizedQuery === "" || visibleRows.length === rows.length
+								? t("wpSessionSection") + " · " + t("wpCount") + rows.length
+								: t("wpSessionSection") + " · " + t("wpSearchCount").replace("{n}", String(visibleRows.length)).replace("{total}", String(rows.length))),
 						]),
 						React.createElement("button", {
 							type: "button",
@@ -2129,6 +2775,56 @@ window.__ModuleLoader__.load({
 								loadSessionCatalog().catch(() => {});
 							},
 						}, t("wpRefresh")),
+					]),
+					/*
+					 * Search, expand-all and select-all share one toolbar so the controls
+					 * the list needs most are found in the same place. Select-all is a
+					 * LABELED checkbox, not a bare 15px box: the old one was there all
+					 * along and still read as missing. It governs what is currently
+					 * visible INSIDE AN OPEN GROUP, which is what the user can actually
+					 * see once groups default to folded.
+					 */
+					rows.length === 0 ? null : React.createElement("div", { className: "dshk-wpTools", key: "tools" }, [
+						React.createElement("input", {
+							key: "search",
+							type: "search",
+							className: "dshk-wpSearch",
+							value: query,
+							placeholder: t("wpSearchPlaceholder"),
+							"aria-label": t("wpSearchPlaceholder"),
+							onChange: (event) => setQuery(event !== null && event !== void 0 && event.target !== void 0 && typeof event.target.value === "string" ? event.target.value : ""),
+						}),
+						query === "" ? null : React.createElement("button", {
+							key: "clearSearch",
+							type: "button",
+							className: "dshk-btn",
+							onClick: () => setQuery(""),
+						}, t("wpSearchClear")),
+						/*
+						 * Fold-all is the companion of default-collapsed: without it a user
+						 * with ten Workspaces clicks ten chevrons to see anything at once.
+						 * The label follows what the click will do, which is also the only
+						 * honest way to render a single toggle.
+						 */
+						grouped ? React.createElement("button", {
+							key: "foldAll",
+							type: "button",
+							className: "dshk-btn dshk-wpFoldAll",
+							onClick: () => setAllGroups(!groups.every((group) => normalizedQuery !== "" || expandedGroups.has(group.key))),
+						}, groups.every((group) => normalizedQuery !== "" || expandedGroups.has(group.key)) ? t("wpCollapseAll") : t("wpExpandAll")) : null,
+						openSelectableRows.length === 0 ? null : React.createElement("label", { key: "all", className: "dshk-pickAllBox", title: normalizedQuery === "" ? t("wpSelectAll") : t("wpSelectAllVisible").replace("{n}", String(openSelectableRows.length)) }, [
+							React.createElement("input", {
+								key: "box",
+								type: "checkbox",
+								className: "dshk-pickAll",
+								checked: allSelected,
+								ref: markIndeterminate(someSelected),
+								"aria-label": t("wpSelectAll"),
+								"aria-checked": someSelected ? "mixed" : allSelected,
+								onChange: () => toggleSelection(openSelectableRows),
+							}),
+							React.createElement("span", { key: "label" }, t("wpSelectAllLabel")),
+						]),
 					]),
 					/*
 					 * The bulk bar appears only once something is ticked. It carries its own
@@ -2164,22 +2860,28 @@ window.__ModuleLoader__.load({
 							},
 						}, t("wpBulkClear")),
 					]) : null,
-					rows.length === 0 ? React.createElement("div", { className: "dshk-wpState", key: "empty" }, t("wpEmpty")) : rows.map((row) => React.createElement(PermissionRow, {
-						key: row.id,
-						t,
-						title: row.title,
-						subtitle: row.subtitle,
-						tags: row.tags,
-						value: row.current,
-						options: row.options,
-						placeholder: row.placeholder,
-						disabled: row.capable !== true,
-						onSwitch: (preset) => switchSession(row, preset),
-						/* Selection is offered only for rows that can actually be changed. */
-						selectable: row.capable === true,
-						selected: effectiveSelection.has(row.id),
-						onToggle: () => toggleSelected(row.id),
-					})),
+					rows.length === 0
+						? React.createElement("div", { className: "dshk-wpState", key: "empty" }, t("wpEmpty"))
+						: visibleRows.length === 0
+							? React.createElement("div", { className: "dshk-wpState", key: "noMatch" }, t("wpSearchEmpty"))
+							: groups.map((group) => grouped
+								? renderGroup(group)
+								/* One bucket, no Workspaces: headers would be noise. */
+								: group.sessions.map((row) => React.createElement(PermissionRow, {
+									key: row.id,
+									t,
+									title: row.title,
+									subtitle: row.subtitle,
+									tags: row.tags,
+									value: row.current,
+									options: row.options,
+									placeholder: row.placeholder,
+									disabled: row.capable !== true,
+									onSwitch: (preset) => switchSession(row, preset),
+									selectable: row.capable === true,
+									selected: effectiveSelection.has(row.id),
+									onToggle: () => toggleSelected(row.id),
+								}))),
 					/*
 					 * Say out loud what the archive filter removed. A row that vanishes
 					 * without explanation reads as a bug; a count tells the user the
@@ -2187,6 +2889,11 @@ window.__ModuleLoader__.load({
 					 * permissions are deliberately not managed from here.
 					 */
 					archivedCount > 0 ? React.createElement("div", { className: "dshk-wpState", key: "archived" }, t("wpArchivedSkipped") + archivedCount) : null,
+					/*
+					 * Same reasoning one level up: an empty Workspace has no heading, so
+					 * say how many were hidden rather than letting them disappear.
+					 */
+					hiddenWorkspaceCount > 0 ? React.createElement("div", { className: "dshk-wpState", key: "hiddenGroups" }, t("wpGroupEmptyHidden").replace("{n}", String(hiddenWorkspaceCount))) : null,
 				]),
 				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
 				/*
@@ -2254,6 +2961,12 @@ window.__ModuleLoader__.load({
 		 */
 		function SessionHeaderButton(props) {
 			const { t } = props;
+			/*
+			 * Session-scoped list slots are handed the Session they were rendered
+			 * into; this button therefore always knows which policy to put on
+			 * display, without inferring it from "which session looks open".
+			 */
+			const focusSessionId = typeof props.sessionId === "string" && props.sessionId !== "" ? props.sessionId : void 0;
 			const [open, setOpen] = React.useState(false);
 			const host = typeof document === "undefined" ? null : document.body;
 			const closePanel = () => setOpen(false);
@@ -2286,7 +2999,7 @@ window.__ModuleLoader__.load({
 						onClick: closePanel,
 					}, t("wpEntryClose")),
 				]),
-				React.createElement(PermissionsSection, { t, key: "entryPanel" }),
+				React.createElement(PermissionsSection, { t, key: "entryPanel", focusSessionId }),
 			])), host) : null;
 			return React.createElement(React.Fragment, null, trigger, panel);
 		}

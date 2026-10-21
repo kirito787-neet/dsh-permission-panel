@@ -21,7 +21,7 @@ const os = require("os");
 const path = require("path");
 
 const profile = process.argv[2] ?? "web";
-const DSH = "C:/Users/Kirito787/AppData/Local/Programs/deepseek-harness";
+const DSH = require("./dsh-install.cjs").DSH;
 const bin = path.join(DSH, "apps", "cli", "lib", "bin.js");
 
 // Write the child's stdout straight to a file descriptor: no pipe is involved,
