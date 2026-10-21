@@ -57,22 +57,32 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
-      # registry-url 只用来让 npm 知道往哪个 registry 发；这里刻意不传 token，
-      # 让 npm CLI 走 OIDC（它会自动发现 id-token 环境并优先使用）。
+      # 刻意不传 registry-url：setup-node 一旦拿到 registry-url 就会写一行
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`，并把 NODE_AUTH_TOKEN
+      # 导出成占位值 XXXXX-XXXXX-XXXXX-XXXXX。这会让 npm 拿到「存在但无效」的凭据，
+      # 直接报 ENEEDAUTH，连 OIDC 交换都不会尝试。npm 默认 registry 就是
+      # registry.npmjs.org，所以不传 registry-url 不影响发布目标。
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
 
-      # setup-node 会往 $NPM_CONFIG_USERCONFIG 写一行
-      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`。本工作流没有这个 env，
-      # 展开后是一行空的 _authToken——而 npm 会优先用「存在但为空」的凭据，
-      # 把 OIDC 挡在后面，报一个看不懂的 401。所以把它换成只声明 registry 的文件。
-      - name: 清掉 .npmrc 里的空 token 行
+      # 双保险：万一有别的步骤/组织级变量把 NODE_AUTH_TOKEN 塞进来（占位值或过期
+      # token），npm 就会认定「已有凭据」而彻底跳过 OIDC 交换。清掉它和可能存在的
+      # .npmrc 认证行，让 npm 只能走 Trusted Publishing。
+      - name: 确保没有残留 token 挡住 OIDC
         run: |
-          printf 'registry=https://registry.npmjs.org/\n' > "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          echo "NPM_CONFIG_USERCONFIG=${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
-          cat "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          unset NODE_AUTH_TOKEN
+          echo "NODE_AUTH_TOKEN is ${NODE_AUTH_TOKEN:-<unset>}"
+          for f in "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}" "$HOME/.npmrc"; do
+            [ -f "$f" ] && { echo "--- $f"; sed -E 's/(_authToken=).*/\1<redacted>/' "$f"; } || true
+          done
+          # GitHub 只有在 permissions: id-token: write 时才会注入这两个变量；
+          # 缺了它们 npm 连 OIDC 都不会尝试。这里提前检查，避免又报一个看不懂的 ENEEDAUTH。
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL}" ]; then
+            echo "::error::ACTIONS_ID_TOKEN_REQUEST_URL 缺失 —— 说明本 job 没有 id-token: write 权限，OIDC 无法工作。"
+            exit 1
+          fi
+          echo "OIDC request endpoint present"
 
       # Trusted Publishing 需要 npm CLI >= 11.5.1；旧版会静默退回 token 认证然后 401。
       - name: 确认 npm 支持 Trusted Publishing
@@ -108,11 +118,17 @@ jobs:
       # （公开仓库 + 公开包），无需再写 --provenance。
       - name: 发布到 npm（Trusted Publishing / OIDC）
         run: |
-          if ! npm publish --access public; then
-            echo "::error::npm 发布失败。若错误是 404 / 401 / EOTP，最常见的原因是 npm 侧还没有为本仓库登记 trusted publisher。"
+          # --loglevel verbose 会把 npm 内部 OIDC 交换的失败原因（例如
+          # 「Failed token exchange request with body message: ...」）打出来，
+          # 这是判断「trusted publisher 没登记」还是「id-token 权限没给」的唯一线索。
+          if ! npm publish --access public --loglevel verbose; then
+            echo "::error::npm 发布失败。"
+            echo "::error::如果上面出现 'Failed token exchange request' 且 body 是 404/Not Found，"
+            echo "::error::说明 npm 侧还没有为本仓库登记 trusted publisher（这是账号本人的网页操作，CI 无法代做）。"
             echo "::error::打开 https://www.npmjs.com/package/${NPM_PACKAGE}/access ，在 Trusted Publisher 里添加 GitHub Actions："
-            echo "::error::   Organization or user = ${GITHUB_REPOSITORY%%/*} ，Repository = ${GITHUB_REPOSITORY#*/} ，Workflow filename = release.yml"
+            echo "::error::   Organization or user = ${GITHUB_REPOSITORY_OWNER} ，Repository = ${GITHUB_REPOSITORY#*/} ，Workflow filename = release.yml"
             echo "::error::并在 Allowed actions 里勾上 npm publish。登记后重跑本工作流（新建的配置要在 2 天内完成首次发布，否则会过期）。"
+            echo "::error::若出现 'Skipped because incorrect permissions for id-token'，则是 job 缺 id-token: write（本文件已有，检查是否被组织策略覆盖）。"
             exit 1
           fi
         env:

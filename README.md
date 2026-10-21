@@ -184,6 +184,7 @@ git push origin master --follow-tags
 
 两个容易踩的坑：
 
+- **`setup-node` 的 `registry-url` 会毒化 OIDC**：只要给 `actions/setup-node` 传了 `registry-url`，它就会写一行 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` 到 `.npmrc`，并把 `NODE_AUTH_TOKEN` 导出成占位值 `XXXXX-XXXXX-XXXXX-XXXXX`。npm 看到「有凭据」就直接走 token 认证、**根本不尝试 OIDC 交换**，报错是 `npm error code ENEEDAUTH`。所以本工作流刻意不传 `registry-url`（npm 默认 registry 就是 npmjs），并额外 unset 一次 `NODE_AUTH_TOKEN` 兜底。
 - **配置有 2 天有效期**：新建的 trusted publisher 必须在 2 天内成功发布一次，才算验证通过并绑定到仓库的不可变身份；超时会过期作废，只能删掉重建。
 - **`Environment name` 留空**：本工作流没有用 GitHub Environments，填了会导致 OIDC 声明的 `sub` 对不上。
 
