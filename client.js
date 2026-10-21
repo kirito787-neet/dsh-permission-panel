@@ -79,6 +79,8 @@ window.__ModuleLoader__.load({
 			wpSelectGroup: "选中此工作区的全部会话",
 			wpExpandAll: "展开全部",
 			wpCollapseAll: "折叠全部",
+			wpLocate: "定位当前会话",
+			wpLocateMissing: "当前会话不在列表中（可能已归档）",
 			wpGroupSelected: "已选 {n}",
 			wpSearchPlaceholder: "搜索会话标题、目录或工作区…",
 			wpSearchClear: "清除搜索",
@@ -169,6 +171,8 @@ window.__ModuleLoader__.load({
 			wpSelectGroup: "Select every session in this workspace",
 			wpExpandAll: "Expand all",
 			wpCollapseAll: "Collapse all",
+			wpLocate: "Locate current session",
+			wpLocateMissing: "Current session is not in this list (it may be archived)",
 			wpGroupSelected: "{n} selected",
 			wpSearchPlaceholder: "Search session title, folder, or workspace…",
 			wpSearchClear: "Clear search",
@@ -278,6 +282,10 @@ window.__ModuleLoader__.load({
 		".dshk-wpGroupPicked{flex:none;font-size:11px;line-height:16px;padding:0 7px;border-radius:8px;background:var(--dsw-alias-interactive-bg-primary,#3b6fe0);color:#fff;white-space:nowrap}",
 		".dshk-wpGroupBody{padding-inline-start:20px}",
 		".dshk-wpFoldAll{flex:none;white-space:nowrap}",
+		/* Locate-current-session: a toolbar button + a brief highlight on the target row. */
+		".dshk-wpLocate{flex:none;white-space:nowrap}",
+		"@keyframes dshk-flash{0%{background:rgba(59,111,224,.30)}70%{background:rgba(59,111,224,.14)}100%{background:transparent}}",
+		".dshk-wpRowFlash{animation:dshk-flash 1.6s ease-out;border-radius:8px}",
 		/* Current-session policy card. */
 		".dshk-wpChip{flex:none;font-size:12px;line-height:18px;padding:2px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:9px;color:var(--dsw-alias-label-primary,#e8eaee);white-space:nowrap}",
 		".dshk-currentRow{display:flex;align-items:center;gap:10px;min-width:0}",
@@ -1907,8 +1915,16 @@ window.__ModuleLoader__.load({
 
 		/** One permission row: optional selection box, session title, tags, preset selector. */
 		function PermissionRow(props) {
-			const { t, title, subtitle, tags, value, options, disabled, onSwitch, selectable, selected, onToggle, placeholder } = props;
-			return React.createElement("div", { className: "dshk-wpRow" + (selected === true ? " dshk-wpRowPicked" : ""), key: title }, [
+			const { t, id, title, subtitle, tags, value, options, disabled, onSwitch, selectable, selected, onToggle, placeholder, flash } = props;
+			/*
+			 * `data-session-id` is the stable handle the locate feature scrolls to;
+			 * `dshk-wpRowFlash` is the ~1.6s highlight applied after the scroll.
+			 */
+			return React.createElement("div", {
+				className: "dshk-wpRow" + (selected === true ? " dshk-wpRowPicked" : "") + (flash === true ? " dshk-wpRowFlash" : ""),
+				key: title,
+				"data-session-id": id,
+			}, [
 				/*
 				 * The checkbox is rendered ONLY for a row that can actually be changed.
 				 * Offering a tick on an unusable row would let the user build a selection
@@ -2097,6 +2113,20 @@ window.__ModuleLoader__.load({
 			 * the first paint and any workspace the host adds afterwards.
 			 */
 			const [expandedGroups, setExpandedGroups] = React.useState(() => new Set());
+			/**
+			 * Locate-current-session plumbing.
+			 *
+			 * `pendingLocate` holds the id whose row must be scrolled to on the next
+			 * commit, and `flashId` marks the row for the brief highlight. Keeping the
+			 * scroll request in STATE (rather than scrolling inside the click handler)
+			 * is what makes it correct: the click only queues a query clear and a group
+			 * expansion, and the row does not exist in the DOM until those land. The
+			 * effect below runs after that commit, so the node it looks up is real.
+			 */
+			const [pendingLocate, setPendingLocate] = React.useState(null);
+			const [flashId, setFlashId] = React.useState(null);
+			/** Root container, so the target row can be found with querySelector. */
+			const listRef = React.useRef(null);
 			/** Ids ticked for a bulk change; cleared after a successful run. */
 			const [selected, setSelected] = React.useState(() => new Set());
 			/** Chosen preset in the bulk bar; null until the user picks one. */
@@ -2166,6 +2196,39 @@ window.__ModuleLoader__.load({
 				document.addEventListener("keydown", onKeyDown);
 				return () => document.removeEventListener("keydown", onKeyDown);
 			}, [gate]);
+
+			/*
+			 * Fulfil a queued locate once the DOM shows the target row.
+			 *
+			 * Runs AFTER the commit that cleared the query and unfolded the Workspace,
+			 * so `listRef` already contains the row. The scroll request lives in state
+			 * (not in the click handler) precisely because setState is asynchronous:
+			 * querying the DOM inside the handler would look for a row that does not
+			 * exist yet. If the row is missing here the node lookup simply returns null
+			 * and nothing happens — the missing case is reported by the handler, never
+			 * invented here.
+			 */
+			React.useEffect(() => {
+				if (pendingLocate === null) return;
+				const root = listRef.current;
+				if (root === null || root === void 0 || typeof root.querySelector !== "function") return;
+				const node = root.querySelector('[data-session-id="' + pendingLocate + '"]');
+				if (node === null || node === void 0) return;
+				if (typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "center", behavior: "smooth" });
+				setFlashId(pendingLocate);
+				setPendingLocate(null);
+			}, [pendingLocate]);
+
+			/*
+			 * Remove the highlight ~1.6s after it is applied. Keyed on `flashId`, the
+			 * timer is torn down when another locate replaces it, so two quick clicks
+			 * cannot leave the first row flashing forever.
+			 */
+			React.useEffect(() => {
+				if (flashId === null) return;
+				const timer = setTimeout(() => setFlashId(null), 1600);
+				return () => clearTimeout(timer);
+			}, [flashId]);
 
 			const rows = React.useMemo(() => {
 				const out = [];
@@ -2396,6 +2459,44 @@ window.__ModuleLoader__.load({
 			 */
 			const setAllGroups = (open) => {
 				setExpandedGroups(() => (open ? new Set(groups.map((group) => group.key)) : new Set()));
+			};
+
+			/**
+			 * Bring the current session's own row into view.
+			 *
+			 * This is a queue, not a scroll: the click may have to clear a search and
+			 * unfold a Workspace first, and neither of those has rendered yet, so the
+			 * row does not exist in the DOM at click time. Clearing the query and adding
+			 * the group key to a NEW Set handles the first two steps; the scroll itself
+			 * is deferred to the `pendingLocate` effect, which runs after the commit
+			 * that actually paints the row. When the session is in no group at all
+			 * (archived, a child, or absent), say so through the existing `problem`
+			 * line instead of pretending the click worked.
+			 */
+			const locateCurrent = () => {
+				if (currentSessionId === null) return;
+				/*
+				 * Search against the UNFILTERED groups, not the displayed `groups`.
+				 * The displayed list has already dropped every session (and every
+				 * group left with no match) that does not match the query, so looking
+				 * there would report "not in this list" for a session the search box is
+				 * merely hiding — and this handler is exactly the one that clears that
+				 * query. Building from `rows` + `workspaces` gives the membership
+				 * independent of the search.
+				 */
+				const group = groupRowsByWorkspace(rows, workspaces).find((entry) => entry.sessions.some((row) => row.id === currentSessionId));
+				if (group === void 0) {
+					setProblem(t("wpLocateMissing"));
+					return;
+				}
+				setProblem(null);
+				if (query !== "") setQuery("");
+				setExpandedGroups((previous) => {
+					const next = new Set(previous);
+					next.add(group.key);
+					return next;
+				});
+				setPendingLocate(currentSessionId);
 			};
 
 			/*
@@ -2689,6 +2790,8 @@ window.__ModuleLoader__.load({
 					? React.createElement("div", { className: "dshk-wpGroupBody", key: "gb" }, group.sessions.map((row) => React.createElement(PermissionRow, {
 						key: row.id,
 						t,
+						id: row.id,
+						flash: flashId === row.id,
 						title: row.title,
 						subtitle: row.subtitle,
 						tags: row.tags,
@@ -2736,7 +2839,7 @@ window.__ModuleLoader__.load({
 				currentPolicy === null ? null : React.createElement("div", { className: "dshk-hint dshk-currentPolicy", key: "policy" }, currentPolicy),
 			]);
 
-			return React.createElement("div", { className: "dshk-page" }, [
+			return React.createElement("div", { className: "dshk-page", key: "page", ref: listRef }, [
 				React.createElement("p", { className: "dshk-intro", key: "intro" }, t("wpIntro")),
 				/*
 				 * With no Session anchor (the Settings page), say why the card is absent
@@ -2812,6 +2915,18 @@ window.__ModuleLoader__.load({
 							className: "dshk-btn dshk-wpFoldAll",
 							onClick: () => setAllGroups(!groups.every((group) => normalizedQuery !== "" || expandedGroups.has(group.key))),
 						}, groups.every((group) => normalizedQuery !== "" || expandedGroups.has(group.key)) ? t("wpCollapseAll") : t("wpExpandAll")) : null,
+						/*
+						 * Locate: jump straight to the current session's own row. Offered
+						 * only when there IS a current session — with no anchor the button
+						 * would have nothing to point at. It sits beside fold-all because
+						 * both are "make the list usable" controls, not per-row actions.
+						 */
+						currentSessionId === null ? null : React.createElement("button", {
+							key: "locate",
+							type: "button",
+							className: "dshk-btn dshk-wpLocate",
+							onClick: locateCurrent,
+						}, t("wpLocate")),
 						openSelectableRows.length === 0 ? null : React.createElement("label", { key: "all", className: "dshk-pickAllBox", title: normalizedQuery === "" ? t("wpSelectAll") : t("wpSelectAllVisible").replace("{n}", String(openSelectableRows.length)) }, [
 							React.createElement("input", {
 								key: "box",
@@ -2870,6 +2985,8 @@ window.__ModuleLoader__.load({
 								: group.sessions.map((row) => React.createElement(PermissionRow, {
 									key: row.id,
 									t,
+									id: row.id,
+									flash: flashId === row.id,
 									title: row.title,
 									subtitle: row.subtitle,
 									tags: row.tags,
