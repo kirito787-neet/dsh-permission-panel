@@ -148,8 +148,8 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 发版以 **git tag 为准**，不从分支自动发：tag 是不可变的快照，事后能回答「npm 上那个 3.2.0 到底是哪份代码」。落在分支上的自动发布会让每个普通提交都变成一个版本号。
 
 ```bash
-# 1) 本地：改版本号 + 跑全套测试 + 提交 + 打 tag
-npm run release patch        # 3.2.0 -> 3.2.1；也接受 minor / major / 3.4.1
+# 1) 本地：改版本号 + 跑全套测试 + 核对包内容 + 提交 + 打 tag
+npm run release patch        # 3.3.0 -> 3.3.1；也接受 minor / major / 3.4.1
 #    工作树必须干净、当前必须在 master、且不能落后 origin/master，
 #    否则脚本会在改动任何文件之前停下。
 
@@ -160,10 +160,11 @@ git push origin master --follow-tags
 推上去之后 `.github/workflows/release.yml` 会：
 
 1. 再跑一遍 `npm test`（tag 指向的代码必须自己是绿的）；
-2. 确认 CI 里的 npm CLI ≥ 11.5.1（Trusted Publishing 的下限，旧版会静默退回 token 认证然后失败）；
-3. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；
-4. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public`，provenance 证明自动附带；
-5. `gh release create <tag> --generate-notes`。
+2. 跑 `npm pack --dry-run --json` 核对真正会发出去的文件清单（少了 `client.js` 插件装得上但界面是空的；多了不该进包的东西可能把本地配置带进 npm）；
+3. 确认 CI 里的 npm CLI ≥ 11.5.1（Trusted Publishing 的下限，旧版会静默退回 token 认证然后失败）；
+4. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；再查一次该版本是否已在 npm 上（在的话提前失败，而不是等 `E403` 去猜）；
+5. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public --loglevel verbose`，provenance 证明自动附带；
+6. `gh release create <tag> --generate-notes`。
 
 任一步失败，后面的步骤不会执行，所以不会出现「npm 有了但 GitHub 没有」这种半截状态。
 
@@ -182,7 +183,7 @@ git push origin master --follow-tags
 4. **Allowed actions** 勾上 **npm publish**（这一项不勾，OIDC 身份只能做 stage publish，正式发布会 403）
 5. 保存
 
-两个容易踩的坑：
+三个容易踩的坑：
 
 - **`setup-node` 的 `registry-url` 会毒化 OIDC**：只要给 `actions/setup-node` 传了 `registry-url`，它就会写一行 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` 到 `.npmrc`，并把 `NODE_AUTH_TOKEN` 导出成占位值 `XXXXX-XXXXX-XXXXX-XXXXX`。npm 看到「有凭据」就直接走 token 认证、**根本不尝试 OIDC 交换**，报错是 `npm error code ENEEDAUTH`。所以本工作流刻意不传 `registry-url`（npm 默认 registry 就是 npmjs），并额外 unset 一次 `NODE_AUTH_TOKEN` 兜底。
 - **配置有 2 天有效期**：新建的 trusted publisher 必须在 2 天内成功发布一次，才算验证通过并绑定到仓库的不可变身份；超时会过期作废，只能删掉重建。
@@ -195,7 +196,7 @@ npm run release patch          # 本地改版本 + 跑测试 + 提交 + 打 tag
 git push origin master --follow-tags   # CI 用 OIDC 发布
 ```
 
-如果 `npm publish` 报 `404` / `401` / `EOTP`，九成是上面那一步没登记或登记错了（工作流会把该填的三项直接打印到日志里）。手动补发某个已存在的 tag：`gh workflow run release -f tag=v3.2.0`。
+如果 `npm publish` 报 `Failed token exchange request` 且 body 是 `404 / package not found`，就是 npm 侧**还没有**为本仓库登记 trusted publisher（这是账号本人的网页操作，带 2FA，CI 和任何 token 都改不了）。工作流会把该填的三项直接打印到日志里。注意：**不要拿「3.2.0 有 provenance」当作登记过的证据**——3.2.0 是旧流程用 `NPM_TOKEN` + `npm publish --provenance` 发的，provenance 只会用到 OIDC 的**签名**，认证仍是 token。同时建议到仓库 **Settings → Secrets and variables → Actions** 删掉残留的 `NPM_TOKEN`。登记完成后手动补发某个已存在的 tag：`gh workflow run release -f tag=v3.3.0`。
 
 **仓库写权限**：创建 Release 用的是自动注入的 `GITHUB_TOKEN`，工作流已声明 `permissions: contents: write`，不需要额外配置。
 

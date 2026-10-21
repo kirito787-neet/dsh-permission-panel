@@ -172,6 +172,11 @@ if (dryRun) {
 // 版本号先改再测：测试里若有断言版本号的用例，应该先看到真实的失败。
 run("npm", ["test"]);
 
+// 发布前核对真正会发出去的文件清单：少了 client.js，插件装得上但界面是空的；
+// 多了不该进包的东西，可能把本地配置带进 npm。CI 里会再查一遍。
+// （npm pack 只跑 prepack/prepare，不跑 prepublishOnly，所以不会重复跑测试。）
+run("npm", ["pack", "--dry-run"]);
+
 run("git", gitArgs(["add", "package.json"]), { mutates: true });
 run("git", gitArgs(["commit", "-m", `chore(release): ${tag}`]), { mutates: true });
 run("git", gitArgs(["tag", "-a", tag, "-m", tag]), { mutates: true });
