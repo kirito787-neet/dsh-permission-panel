@@ -57,12 +57,22 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
-      # registry-url 只用来生成指向 npmjs 的 .npmrc；这里刻意不传 token，
+      # registry-url 只用来让 npm 知道往哪个 registry 发；这里刻意不传 token，
       # 让 npm CLI 走 OIDC（它会自动发现 id-token 环境并优先使用）。
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # setup-node 会往 $NPM_CONFIG_USERCONFIG 写一行
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`。本工作流没有这个 env，
+      # 展开后是一行空的 _authToken——而 npm 会优先用「存在但为空」的凭据，
+      # 把 OIDC 挡在后面，报一个看不懂的 401。所以把它换成只声明 registry 的文件。
+      - name: 清掉 .npmrc 里的空 token 行
+        run: |
+          printf 'registry=https://registry.npmjs.org/\n' > "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          echo "NPM_CONFIG_USERCONFIG=${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          cat "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
 
       # Trusted Publishing 需要 npm CLI >= 11.5.1；旧版会静默退回 token 认证然后 401。
       - name: 确认 npm 支持 Trusted Publishing
