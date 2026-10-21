@@ -148,6 +148,12 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 - **迁移待办会话（`migration-required`）**：宿主此时可能只给缓存里的部分投影键，其中也许没有 `permissions`。面板把这类行保留为不可用（fail-open），不会因为读不到就把会话从列表里藏掉。
 - **探测失败不静默**：面板侧的服务探测失败会打 `console.error` 并写入全局诊断槽，把「面板莫名空白」变成一行可读答案。
 
+## 迁移与兼容契约
+
+- **从 `dsh-hotkey-toolkit` 改名而来**：包名、Loader 行 id、客户端模块 id、字典命名空间、`settings.section` 行 id、快捷键命令 id 全部改为 `dsh-permission-panel` / `permissionPanel.*`。profile 里若还留着旧包，先 `dsh plugin --profile <profile> remove dsh-hotkey-toolkit` 再装新包，避免两行同时挂载、两个设置页同时出现。
+- **`modelSearch` 只写不读地透传**：可搜索的模型菜单已迁到 [dsh-client-ui-effort-slider](https://github.com/Kirito787/DSH-Claude-Style-Reasoning-Slider)——两个插件注册的都是 `conversation.input.model` 这一格位，而槽位对遮蔽型席位是「单选」语义，同时注册只会互相遮蔽，胜负取决于加载顺序。本插件的偏好文档仍保留 `modelSearch` 字段但不再读取。之所以必须保留：`update()` 每次都用整份快照重写文档，若顺手丢掉该字段，用户下一次拨动任意快捷键开关就会把旧选择抹掉，而滑块插件那时未必已经读过它。`test/legacy-model-search.cjs` 守着这条契约。
+- **旧版载荷容忍**：更早写入的 `{ enabled, refresh, restart, modes }` 会被识别并忽略未知字段；`shortcuts` 逐键合并，缺失的键取默认（开）；非布尔的脏值不会被带进后续写入。
+
 ## 版本
 
 当前 **3.2.0**。3.x 的主要节点：3.0.x 修掉了归档流锁死刷新、嵌套命名空间注入缺失、冷读失败静默丢弃、`agentId` wire 形状、切换后不回写等一批真实缺陷；3.1.0 增加了搜索、两级全选、按工作区分组与当前会话策略卡片；3.2.0 把工作区分组改为**默认折叠**并补上展开/折叠全部、折叠组已选计数。
