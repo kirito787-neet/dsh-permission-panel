@@ -190,6 +190,8 @@ const fakeScope = {
             items: [
               { workspaceId: "w1", path: "H:/work/a", title: "Alpha", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 },
               { workspaceId: "w2", path: "H:/work/b", title: "Beta", sessionIds: ["s2"], createdAt: 2, updatedAt: 2 },
+              /* Sole member is archived, so this Workspace has no manageable row and no heading. */
+              { workspaceId: "w3", path: "H:/work/c", title: "Gamma", sessionIds: ["s3"], createdAt: 3, updatedAt: 3 },
             ],
             archivedSessionIds: ["s3"],
             pinnedSessionIds: [],
@@ -298,6 +300,8 @@ const PRESET_LABELS = {
   wpSelectGroup: "Select every session in this workspace",
   wpSelectAll: "Select every manageable session",
   wpSelectAllVisible: "Select all {n} visible sessions",
+  wpGroupEmptyHidden: "Workspaces with no manageable sessions hidden: {n}",
+  wpCurrentRefresh: "Read again",
 };
 const translate = (key) => PRESET_LABELS[key] ?? key;
 
@@ -1228,6 +1232,22 @@ const openDropdown = (index) => {
   if (groupBar === undefined) throw new Error("case 20: the group select-all did not reveal the bulk bar");
   if (!/\b1\b/u.test(explain(groupBar))) {
     throw new Error("case 20: the group select-all did not select exactly that group's member; saw " + JSON.stringify(explain(groupBar)));
+  }
+  /*
+   * A Workspace whose only member is archived has nothing to show, so it gets no
+   * heading — but the count must say so, or "my Gamma workspace disappeared" is
+   * the only available reading. It is counted from the UNFILTERED rows, so typing
+   * in the search box cannot inflate it.
+   */
+  const hiddenNote = collect(groupTree, (entry) => entry.props?.className === "dshk-wpState" && explain(entry).includes("Workspaces with no manageable sessions hidden"));
+  if (hiddenNote.length !== 1) {
+    throw new Error("case 20: the empty Workspace was dropped without saying so; saw " + JSON.stringify(hiddenNote.map(explain)));
+  }
+  if (!/\b1\b/u.test(explain(hiddenNote[0]))) {
+    throw new Error("case 20: the hidden-Workspace note reports the wrong count; saw " + JSON.stringify(explain(hiddenNote[0])));
+  }
+  if (groupTree !== undefined && collect(groupTree, (entry) => entry.props?.className === "dshk-wpGroupTitle" && explain(entry).includes("Gamma")).length !== 0) {
+    throw new Error("case 20: a Workspace with no manageable session still rendered a heading");
   }
 
   console.log(

@@ -15,7 +15,7 @@ DSH 的**工作区权限面板**，外加唯一一个官方快捷键：**重启 
 - **按工作区分组**：会话按 `workspace.sessionIds`（Workspace 注册表声明的归属关系）分组显示，而不是按 `cwd` 猜——两者经常不一致，`cwd` 只是这个会话跑过的路径。组头显示工作区名、路径与成员数，可折叠（带搜索词时自动展开以免藏起匹配项）；不属于任何工作区的会话落入末尾的「未分组」桶，没有可管理会话的空工作区不显示，另在底部注明隐藏了几个。工作区数据来自 `remote.workspace.follow` 流（`baseline`/`replace`/`upsert`/`remove`/`order` 帧都处理）；流不可用时降级为平铺列表，行不会消失。
 - **搜索**：标题右侧的搜索框按子串匹配会话标题、工作目录、工作区名与工作区路径，大小写不敏感；标题处实时显示「匹配 N / 总数」。**过滤即收窄选择**：被过滤掉的行会从已选中集合中移除，`全选` 只作用于当前可见且可管理的行——对看不见的会话做批量写入是用户无法预期的行为。
 - **全选**：全局「全选」与每个工作区组头的「全选」各管一层；部分选中时呈现半选态（`indeterminate` + `aria-checked="mixed"`），此时点击会全选而非取消。
-- **当前会话实际生效策略**：面板顶部的一张卡片，显示用户当前所在会话的标题、**宿主冷读回来的**预设值，以及宿主 catalog 里该预设的原文说明（沙箱/审批两个旋钮在客户端没有 wire，所以说明只能是宿主自己的措辞，绝不由插件猜测）。设置页没有会话上下文，此时用官方同款规则（`retainedBy.mainView > 0`）判定「正在看的会话」；`custom` 派生态显示为「自定义」。每次打开面板强制冷读一次，切换成功后**再读一次**确认——「改完心里没底」要的是宿主的回答，不是面板自己刚写下的记录。
+- **当前会话实际生效策略**：面板顶部的一张卡片，显示用户当前所在会话的标题、**宿主冷读回来的**预设值，以及宿主 catalog 里该预设的原文说明（沙箱/审批两个旋钮在客户端没有 wire，所以说明只能是宿主自己的措辞，绝不由插件猜测）。`custom` 派生态显示为「自定义」。每次打开面板强制冷读一次，切换成功后**再读一次**确认——「改完心里没底」要的是宿主的回答，不是面板自己刚写下的记录。**卡片只出现在会话头部入口**：那里由槽位直接给出 `sessionId`，出处明确。设置页没有会话上下文，0.2.1 也没有任何受支持的客户端接口能回答「主视图里是哪个会话」（`sessions` 快照 store 已被移除，`test/host-api.cjs` 明确禁止插件请求它），所以设置页不猜——它直接说明该卡片需要从会话头部进入，而不是拿一个可能错的会话充数。
 - **右侧预设下拉**：仅可查看 / 工作区内修改 / 完全权限，带彩色预设标记与选中勾。切换通过宿主原生 `/permission <preset>` 命令**按会话 id** 下发，立即生效。
 - **新会话默认权限**：卡片顶部一行，候选项取自 `catalog.defaultOptions`（可作默认的预设子集），当前值取自 `permission` 命名空间的 `defaultPreset`；写入走一次 settings mutation 并携带 revision 做乐观并发校验。**只影响之后新建的会话**，已有会话不受影响。
 - **完全权限确认**：切到 `danger-full-access` 前弹出居中模态（Portal 到 `<body>`，不随面板滚动），必须勾选风险确认才能继续；支持 `Esc` 与点击遮罩取消。批量切换**整批只确认一次**——同一个确认问十遍只会训练用户无脑点过。
@@ -61,14 +61,14 @@ DSH 的**工作区权限面板**，外加唯一一个官方快捷键：**重启 
 | --- | --- |
 | 枚举会话 | `remote.session.list({})` → `{ items: SessionSummary[] }`（每行自带投影提示） |
 | 冷读单会话投影 | `remote.session.projections({ sessionId })` → `{ ok, value }`；value 是 sequenced baseline、migration-required 提示，或 `null`（会话不存在） |
-| 归档集合 | `remote.workspace.follow(signal)` 流，消费 `baseline` / `replace` / `archived` 帧里的 `archivedSessionIds` |
+| 归档集合与工作区归属 | `remote.workspace.follow(signal)` 流：`baseline` / `replace` 帧同时给出 Workspaces、`archivedSessionIds`、`pinnedSessionIds`；`upsert` / `remove` / `order` 维护工作区列表；`archived` 只更新归档集合 |
 | 读写设置 | `remote.settings.describe()`、`remote.settings.mutate(ns, ops, revision)` |
 | 预设目录 | `remote.permissionPresets.catalog()` → `{ options, defaultOptions, defaultPreset }` |
 | 下发权限命令 | `remote.commands.execute(sessionId, "/permission <preset>", [], signal)` —— **首参是裸 Session id 字符串**，不是 `{ id }` 对象 |
 
 **嵌套命名空间逐个门控**：`ctx.remote` 是一个服务，而 `remote.session`、`remote.settings`、`remote.permissionPresets`、`remote.workspace`、`remote.commands` 各自是独立注册的服务。只声明 `remote` **不覆盖**子命名空间——读取会抛 `cannot get property "remote.workspace" without inject`。因此每个用到的 `remote.<ns>` 都在 `inject` 数组里单独列一条；`test/host-api.cjs` 静态扫描活跃代码里所有 `remote.<ns>` 读取并逐条校验，漏一个就失败。
 
-**硬门控 vs 软门控**：`inject` 数组里的名字是**硬要求**——服务缺失会让插件永远停在 PENDING；嵌套的 `ctx.inject([...], …)` 是**软要求**——回调不执行，只有依赖它的那个功能降级。因此 `shortcuts`、`sessions` 这类可选服务一律走软门控；归档集合读不到时 `useArchivedIds()` 失败开放为**空集合**（多显示一行归档会话无害，少显示一行正常会话才是 bug）。
+**硬门控 vs 软门控**：`inject` 数组里的名字是**硬要求**——服务缺失会让插件永远停在 PENDING；嵌套的 `ctx.inject([...], …)` 是**软要求**——回调不执行，只有依赖它的那个功能降级。因此 `shortcuts` 这类可选服务一律走软门控；归档集合读不到时 `useArchivedIds()` 失败开放为**空集合**（多显示一行归档会话无害，少显示一行正常会话才是 bug）。工作区流断开同理：`sessionCatalog.workspaces` 保持空数组，面板退化为平铺列表，行不会消失。
 
 **投影只有 `currentValue`**：`permissions` 投影的 wire 形状是 `{ currentValue: string }`，没有 `options` 字段。预设候选项必须来自进程级目录 `catalog`；从投影里读 `permissions.options` 只会得到 `undefined`，于是每行都被判为 `capable: false`。
 
@@ -145,7 +145,7 @@ parameters[0]: {
 会话一多，原来的面板就只剩一个字：点。这一版针对「点得手抽筋」和「改完心里没底」：
 
 1. **搜索**（标题 / 目录 / 工作区名 / 工作区路径，大小写不敏感），并实时显示「匹配 N / 总数」；无匹配时有明确空态，不留空白。
-2. **全选**，全局与分组两级，半选态可辨。与搜索联动时**只作用于可见行**，被过滤掉的行同时从选择集中移除——这保证了「我看不见的会话不会被批量改掉」。这里有个需要说清的测试边界：作用域在实现上做了两道（控件只拿到可见行 + 读取时对可见集求交），因此单独把控件改接全量列表的变异**在外部不可观测**，`test/smoke.cjs` 的 case 19 不假装能抓住它，而是断言用户真正在意的那条保证（任何过滤顺序下，隐藏行都不会进入批量写入）。
+2. **全选**，全局与分组两级，半选态可辨。与搜索联动时**只作用于可见行**，被过滤掉的行同时从选择集中移除——这保证了「我看不见的会话不会被批量改掉」。这里有个需要说清的测试边界：作用域在实现上做了两道（控件只拿到可见行 + 读取时对可见集求交），因此单独把控件改接全量列表的变异**在外部不可观测**，`test/smoke.cjs` 的 case 19 不假装能抓住它，而是断言用户真正在意的那条保证（任何过滤顺序下，隐藏行都不会进入批量写入）。第二道（对可见集求交）是**可观测**的：把它改成原样返回 `selected`，case 19 立刻报「selection was not pruned」，批量条会显示 2 个已选。两道里至少有一道始终挡在批量写入前面。
 3. **按工作区分组**，成员关系取自 `workspace.sessionIds`，不是 `cwd`。组可折叠（有搜索词时强制展开）、空工作区隐藏并计数、无归属会话进「未分组」。workspace 流断开时降级为平铺，行不会消失。
 4. **当前会话实际生效策略**卡片：宿主冷读回真实预设 + 宿主 catalog 的原文说明；`custom` 显示「自定义」；打开面板强制冷读，切换后再读一次确认。**不自行解析预设名去反推沙箱/审批**——客户端拿不到那两个旋钮的 wire（`sandboxMode` 投影无 wire、`approval` 根本没有投影），自己猜出来的「实际策略」恰好是这一版要消灭的那种没有根据的确定性。
 
@@ -191,7 +191,7 @@ npm test   # 无外部依赖：键位审计 / 词典 / 宿主 API / 迁移兼容
 - **`test/dictionaries.cjs`** — 词典完整性。`zh` / `en` 键集完全一致、代码里每个字面量 `t("key")` 都存在。宿主本地化**不跨命名空间回退**，缺键会把原始键名直接显示给用户。
 - **`test/host-api.cjs`** — 宿主 API 兼容。剥掉注释后只查活跃代码：断言不再出现已移除的 `settingsScope`、客户端 `sessions.list` 与 `workspaces.list` 快照，也不再从 `permissions` 投影读 `options`；断言每个 `remote.<ns>` 读取都在 `inject` 声明过；断言 `workspaces` / `shortcuts` / `sessions` **不在**硬门控数组里；断言面板确实使用 `remote.session.list`、`remote.session.projections`、`remote.workspace.follow`，并断言 `commands.execute` 的首参是裸 Session id（出现对象形状即失败）。行为检查在**两种载体**上、仅用 0.2.1 真实提供的接口激活插件。
 - **`test/legacy-model-search.cjs`** — 迁移兼容。真实加载 `client.js`、渲染设置页、按行定位开关并调用其 `onChange`，断言偏好文档里的 `modelSearch` 字段在每次整份重写后都**完好保留**。
-- **`test/smoke.cjs`** — 面板渲染与交互。夹具是 `remote.session.list` 返回的行；断言行内下拉**没有被禁用**、点击后按会话 id 下发 `/permission`、默认权限写入携带 revision、批量只作用于勾选行（未勾选行被刻意放在同一预设上，使「忽略选择」必然产生第二条命令）、归档会话不出现且跳过数被报告。
+- **`test/smoke.cjs`** — 面板渲染与交互。夹具是 `remote.session.list` 返回的行与 `remote.workspace.follow` 的 baseline（两个工作区 + 一个只有归档成员、故不显示组头的工作区）；断言行内下拉**没有被禁用**、点击后按会话 id 下发 `/permission`、默认权限写入携带 revision、批量只作用于勾选行（未勾选行被刻意放在同一预设上，使「忽略选择」必然产生第二条命令）、归档会话不出现且跳过数被报告；并覆盖分组（成员关系取自 `workspace.sessionIds`，空工作区不给组头但报数）、搜索（标题/目录/工作区名与路径、匹配计数、空态）、搜索下全选只覆盖可见行、当前会话卡片（强制冷读宿主投影、显示 catalog 原文说明）。`remote.session.projections` 的桩按会话 id 应答并由 `commands.execute` 同步更新，因此「读回宿主真值」与「回显自己刚写的记录」是两件可区分的事——把强制冷读去掉，卡片用例会失败。
 - **`test/platform.cjs`** — 双载体回归。以「有 preload 桥」「只有 URL 标记」「两者都没有」三种页面加载真实 `client.js`，断言插件**不再安装自己的全局 `keydown` 监听**、命令已贡献给官方服务、Desktop-only 命令**不含任何 Web 档位默认值**且在 Web 下 `resolve` 返回 `blocked`；并在**完全不提供 `workspaces`** 的载体上再加载一次，验证软门控缺失时插件仍能激活。
 
 ## 工具
@@ -220,6 +220,9 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 - **载体识别每次调用即时探测**，不在激活时缓存一次：插件可能被热重载进一个稍后才装上 preload 桥的页面，缓存住一次否定会让宿主本可提供的命令永久失效。
 - **Desktop 专有命令在 Web 下是「不声明默认键位 + `resolve` 拒绝」**，而不是渲染成灰色行：置灰会暗示别的含义，而这里缺的是宿主能力，不是用户权限。
 - **读投影不等于开会话**：`retain()` 会实体化 scope 并打开历史；列表型功能必须用 `projections` 冷读，否则「看一眼所有会话的权限」会变成「把所有会话都打开一遍」。
+- **「实际生效」只能来自宿主，不能来自插件自己**：面板切换成功后写回的行值只是面板**自己的记录**，不能拿它证明宿主在按什么策略执行。所以当前会话卡片走的是强制冷读（`readSessionProjections(id, true)`，绕过「只读 idle 行」的限制），并且切换之后再读一次。同理，策略说明只引用 `catalog` 里宿主的原话：`permissions` 投影只有 `currentValue`，沙箱模式投影没有 wire、审批策略根本没有投影，任何「从预设名反推沙箱与审批」的实现都只是在编。
+- **按工作区分组，而不是按目录**：`workspace.sessionIds` 是注册表声明的归属关系，`cwd` 只是会话跑过的路径；按目录分组会把「在 A 目录启动、但归档到 B 工作区」的会话放到错误的标题下，而那个位置上的批量操作会打错人。
+- **选择范围永远等于可见范围**：搜索、归档、投影失败都会让行消失，批量条上的数字必须随之收缩。让一个看不见的会话保持勾选，等于把「清除选择」变成一次伏击。
 - **按 id 下发命令，不要先拿 binding**：`sessions.binding(id)` 只返回已存在的 scope、从不创建；`remote.commands.execute(sessionId, …)` 走宿主按需恢复，未打开的会话是完全合法的目标。
 - **迁移待办会话（`migration-required`）**：宿主此时可能只给缓存里的部分投影键，其中也许没有 `permissions`。面板把这类行保留为不可用（fail-open），不会因为读不到就把会话从列表里藏掉。
 - **探测失败不静默**：面板侧的服务探测失败会打 `console.error` 并写入全局诊断槽，把「面板莫名空白」变成一行可读答案。

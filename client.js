@@ -75,7 +75,6 @@ window.__ModuleLoader__.load({
 			wpEmpty: "当前没有会话。",
 			wpArchivedSkipped: "已跳过已归档会话：",
 			wpSelectAll: "全选可管理会话",
-			wpSelectAllShort: "全选",
 			wpSelectAllVisible: "全选当前可见的 {n} 个会话",
 			wpSelectGroup: "选中此工作区的全部会话",
 			wpSearchPlaceholder: "搜索会话标题、目录或工作区…",
@@ -89,9 +88,6 @@ window.__ModuleLoader__.load({
 			wpExpandGroup: "展开工作区 {name}",
 			wpCurrentSection: "当前会话实际生效策略",
 			wpCurrentUnknown: "无法确定当前会话（设置页没有当前视图信息）。请用会话头部的「权限」按钮查看。",
-			wpCurrentReading: "正在从宿主读取…",
-			wpCurrentFailed: "读取当前策略失败：",
-			wpCurrentNoProjection: "宿主没有提供这个会话的权限投影。",
 			wpCurrentLive: "宿主投影实时值，不是本地缓存的旧值。",
 			wpCurrentRefresh: "重新读取",
 			wpCurrentSubject: "会话：",
@@ -166,7 +162,6 @@ window.__ModuleLoader__.load({
 			wpEmpty: "No sessions right now.",
 			wpArchivedSkipped: "Archived sessions skipped: ",
 			wpSelectAll: "Select every manageable session",
-			wpSelectAllShort: "Select all",
 			wpSelectAllVisible: "Select all {n} visible sessions",
 			wpSelectGroup: "Select every session in this workspace",
 			wpSearchPlaceholder: "Search session title, folder, or workspace…",
@@ -180,9 +175,6 @@ window.__ModuleLoader__.load({
 			wpExpandGroup: "Expand workspace {name}",
 			wpCurrentSection: "Policy in effect for this session",
 			wpCurrentUnknown: "Cannot tell which session is current from the settings page. Use the Permissions button in a session header.",
-			wpCurrentReading: "Reading from the host…",
-			wpCurrentFailed: "Failed to read the current policy: ",
-			wpCurrentNoProjection: "The host serves no permission projection for this session.",
 			wpCurrentLive: "Live value from the host projection, not a cached local value.",
 			wpCurrentRefresh: "Read again",
 			wpCurrentSubject: "Session: ",
@@ -2272,6 +2264,25 @@ window.__ModuleLoader__.load({
 			/** Whether to draw group headers at all: one ungrouped bucket is a flat list. */
 			const grouped = groups.length > 1 || (groups.length === 1 && groups[0].workspaceId !== void 0);
 
+			/*
+			 * Workspaces that contributed no row and therefore no heading.
+			 *
+			 * Counted from the UNFILTERED rows: a workspace whose members are all
+			 * subagents, archived, or simply not listed would otherwise vanish without
+			 * a trace, and a missing "Alpha" heading reads as "my workspace is gone"
+			 * rather than "nothing in it can be managed here". Counting after the
+			 * search filter would instead report the user's own typing as hidden data.
+			 */
+			const hiddenWorkspaceCount = React.useMemo(() => {
+				if (workspaces.length === 0) return 0;
+				const present = new Set(rows.map((row) => row.id));
+				let hidden = 0;
+				for (const workspace of workspaces) {
+					if (!workspace.sessionIds.some((id) => present.has(id))) hidden += 1;
+				}
+				return hidden;
+			}, [rows, workspaces]);
+
 			/** Selectable visible rows, i.e. the only ones worth offering. */
 			const selectableRows = React.useMemo(
 				() => visibleRows.filter((row) => row.capable === true),
@@ -2642,7 +2653,25 @@ window.__ModuleLoader__.load({
 						React.createElement("h4", { key: "h" }, t("wpCurrentSection")),
 						React.createElement("div", { className: "dshk-hint", key: "who" }, t("wpCurrentSubject") + currentRow.title),
 					]),
-					React.createElement("span", { className: "dshk-wpChip", key: "chip", title: t("wpEffective") }, currentRow.current === null ? (currentRow.placeholder ?? t("wpUnavailable")) : presetLabel(currentRow.current, t)),
+					React.createElement("span", {
+						className: "dshk-wpChip",
+						key: "chip",
+						/* The chip is the Host's value, and the tooltip says where it came from. */
+						title: t("wpEffective") + " · " + t("wpCurrentLive"),
+					}, currentRow.current === null ? (currentRow.placeholder ?? t("wpUnavailable")) : presetLabel(currentRow.current, t)),
+					/*
+					 * Read-again, on demand. The panel force-reads on open and after a
+					 * switch, but a policy can also change outside this panel; a reader
+					 * who wants reassurance now should not have to close and reopen the
+					 * dialog to get it.
+					 */
+					React.createElement("button", {
+						type: "button",
+						className: "dshk-btn",
+						key: "reread",
+						title: t("wpCurrentLive"),
+						onClick: () => refreshSessionProjection(currentRow.id),
+					}, t("wpCurrentRefresh")),
 				])),
 				currentPolicy === null ? null : React.createElement("div", { className: "dshk-hint dshk-currentPolicy", key: "policy" }, currentPolicy),
 			]);
@@ -2787,6 +2816,11 @@ window.__ModuleLoader__.load({
 					 * permissions are deliberately not managed from here.
 					 */
 					archivedCount > 0 ? React.createElement("div", { className: "dshk-wpState", key: "archived" }, t("wpArchivedSkipped") + archivedCount) : null,
+					/*
+					 * Same reasoning one level up: an empty Workspace has no heading, so
+					 * say how many were hidden rather than letting them disappear.
+					 */
+					hiddenWorkspaceCount > 0 ? React.createElement("div", { className: "dshk-wpState", key: "hiddenGroups" }, t("wpGroupEmptyHidden").replace("{n}", String(hiddenWorkspaceCount))) : null,
 				]),
 				problem !== null ? React.createElement("div", { className: "dshk-note", key: "problem" }, problem) : null,
 				/*
