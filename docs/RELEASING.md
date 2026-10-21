@@ -67,8 +67,9 @@ git push origin master --follow-tags
 
 三个容易踩的坑：
 
-- **新建的配置有 2 天有效期**：登记后必须在 2 天内成功发布一次才算验证通过并永久绑定；超时会过期作废，只能删掉重建。
+- **新建的配置有 48 小时有效期**：登记后必须在 48 小时内成功发布一次，配置才会被标记为「已验证」并免于过期；超时会过期作废（仍显示在设置页里，但不计数、也不能授权发布），只能删掉重建。改仓库或项目身份会重新开始一个 48 小时窗口；普通编辑不会重置。见 [GitHub Changelog 2026-10-02](https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire/)。
 - **`setup-node` 的 `registry-url` 会毒化 OIDC**：只要给 `actions/setup-node` 传了 `registry-url`，它就会写一行 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` 到 `.npmrc`，并把该变量导出成占位值。npm 见到「有凭据」就**根本不做 OIDC 交换**，报 `npm error code ENEEDAUTH`。所以 workflow **刻意不传** `registry-url`，并额外 `unset NODE_AUTH_TOKEN` 兜底。
+- **provenance 不一定真的自动生成**：npm 文档说 trusted publishing 会自动附带 provenance，但实测有多例必须显式加 `--provenance` 才发得出去（[philna.sh 复盘](https://philna.sh/blog/2026/01/28/trusted-publishing-npm)、[npm/cli#8730](https://github.com/npm/cli/issues/8730)）。本仓库的 publish 命令因此显式带 `--provenance`，并在发布后回读 `dist.attestations` 确认；缺了只告警不阻断。
 - **判断失败原因的唯一线索是 `--loglevel verbose`**：它会打印 `Failed token exchange request with body message: ...`。出现 `404 / package not found` 就是 npm 侧没有匹配的 trusted publisher 登记；出现 `Skipped because incorrect permissions for id-token` 则是 job 缺 `id-token: write`。
 
 > 想更严格：npm 包的 **Settings → Publishing access** 可以选「Require two-factor authentication and disallow tokens」，这会禁掉所有传统 token 的发布权限，而 OIDC trusted publisher 不受影响。本仓库没有 token，这一项只是加一道保险。

@@ -162,11 +162,13 @@ git push origin master --follow-tags
 1. 再跑一遍 `npm test`（tag 指向的代码必须自己是绿的）；
 2. 跑 `npm pack --dry-run --json` 核对真正会发出去的文件清单（少了 `client.js` 插件装得上但界面是空的；多了不该进包的东西可能把本地配置带进 npm）；
 3. 确认 CI 里的 npm CLI ≥ 11.5.1（Trusted Publishing 的下限，旧版会静默退回 token 认证然后失败）；
-4. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；再查一次该版本是否已在 npm 上（在的话提前失败，而不是等 `E403` 去猜）；
-5. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public --loglevel verbose`，provenance 证明自动附带；
-6. `gh release create <tag> --generate-notes`。
+4. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；
+5. 再查一次该版本是否已在 npm 上：**已在**就跳过发布，直接去核验并补建 Release（这样重跑一个「npm 有了、Release 没建成」的半截状态不会撞 `E403` 干瞪眼）；
+6. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public --provenance --loglevel verbose`（`--provenance` 显式写，见下面第三个坑）；
+7. **回读 npm 核验**：`npm view <包>@<版本> version` 必须查得到、`dist.tarball` 必须存在，provenance 在则记一条 notice、缺了只 warning 不阻断。绿勾不等于发布成功，registry 上查得到才算；
+8. `gh release create <tag> --generate-notes`。
 
-任一步失败，后面的步骤不会执行，所以不会出现「npm 有了但 GitHub 没有」这种半截状态。
+任一步失败，后面的步骤不会执行，所以不会出现「GitHub 上有版本、npm 上没有」这种假象。反过来「npm 有、Release 没建成」的情况，重跑一次本工作流就能补齐。
 
 ### 发布凭据：Trusted Publishing，没有长期密钥
 
@@ -183,10 +185,11 @@ git push origin master --follow-tags
 4. **Allowed actions** 勾上 **npm publish**（这一项不勾，OIDC 身份只能做 stage publish，正式发布会 403）
 5. 保存
 
-三个容易踩的坑：
+四个容易踩的坑：
 
 - **`setup-node` 的 `registry-url` 会毒化 OIDC**：只要给 `actions/setup-node` 传了 `registry-url`，它就会写一行 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` 到 `.npmrc`，并把 `NODE_AUTH_TOKEN` 导出成占位值 `XXXXX-XXXXX-XXXXX-XXXXX`。npm 看到「有凭据」就直接走 token 认证、**根本不尝试 OIDC 交换**，报错是 `npm error code ENEEDAUTH`。所以本工作流刻意不传 `registry-url`（npm 默认 registry 就是 npmjs），并额外 unset 一次 `NODE_AUTH_TOKEN` 兜底。
-- **配置有 2 天有效期**：新建的 trusted publisher 必须在 2 天内成功发布一次，才算验证通过并绑定到仓库的不可变身份；超时会过期作废，只能删掉重建。
+- **配置有 48 小时有效期**：新建的 trusted publisher 必须在 48 小时内成功发布一次，才会被标记为「已验证」并免于过期；超时则过期作废（设置页里还看得见，但不能授权发布），只能删掉重建（[GitHub Changelog](https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire/)）。
+- **provenance 不一定真自动**：npm 文档说 trusted publishing 会自动生成 provenance，但实测有多例必须显式加 `--provenance` 才发得出去（[npm/cli#8730](https://github.com/npm/cli/issues/8730)）。本工作流的 publish 命令显式带 `--provenance`，发布后再回读 `dist.attestations` 确认；缺失只告警不阻断。
 - **`Environment name` 留空**：本工作流没有用 GitHub Environments，填了会导致 OIDC 声明的 `sub` 对不上。
 
 登记完成后，本项目的发版就变成纯 OIDC：

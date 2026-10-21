@@ -141,15 +141,19 @@ jobs:
 
       # 凭据来自 OIDC：GitHub 签发一张短期、绑定「本仓库 + 本工作流」的一次性 token，
       # 由 npm 侧登记过的 trusted publisher 关系验证。仓库里没有任何长期 npm 密钥，
-      # 因此也不存在 90 天轮换的问题。发布成功时 provenance 证明会自动附带
-      # （公开仓库 + 公开包），无需再写 --provenance。
+      # 因此也不存在 90 天轮换的问题。
+      #
+      # 关于 --provenance：npm 文档说 trusted publishing 会自动生成 provenance，
+      # 但实测有多例「不加这个 flag 就发不出去 / 没有 attestation」，所以显式写上。
+      # 自动生成时它是幂等的，不会重复签名；仓库是公开的、repository 字段也正确，
+      # 满足 provenance 的前置条件。
       - name: 发布到 npm（Trusted Publishing / OIDC）
         if: steps.check.outputs.already_published != 'true'
         run: |
           # --loglevel verbose 会把 npm 内部 OIDC 交换的失败原因（例如
           # 「Failed token exchange request with body message: ...」）打出来，
           # 这是判断「trusted publisher 没登记」还是「id-token 权限没给」的唯一线索。
-          if ! npm publish --access public --loglevel verbose; then
+          if ! npm publish --access public --provenance --loglevel verbose; then
             echo "::error::npm 发布失败。"
             echo "::error::如果上面出现 'Failed token exchange request' 且 body 是 404/Not Found，"
             echo "::error::说明 npm 侧还没有为本仓库登记 trusted publisher（这是账号本人的网页操作，CI 无法代做）。"
