@@ -70,8 +70,11 @@ dsh plugin --profile <profile> add "link:<本仓库绝对路径>"
 npm pack
 dsh plugin --profile <profile> add "file:<绝对路径>/dsh-permission-panel-<version>.tgz"
 
-# 3) 从 npm 安装（发布后）
+# 3) 从 npm 安装（推荐）
 dsh plugin --profile <profile> add dsh-permission-panel
+
+# 需要固定某一版时
+dsh plugin --profile <profile> add dsh-permission-panel@3.2.0
 ```
 
 - `--profile` 是必填项，没有默认 profile。
@@ -159,10 +162,27 @@ git push origin master --follow-tags
 
 任一步失败，后面的步骤不会执行，所以不会出现「npm 有了但 GitHub 没有」这种半截状态。
 
-### 首次发布需要两个凭据
+### 发布凭据怎么配
 
-- **npm 令牌**：在 [npmjs.com](https://www.npmjs.com/settings/tokens) 建一个 **Automation** 类型的 token，存成仓库 secret `NPM_TOKEN`（`gh secret set NPM_TOKEN`）。没有它时工作流只建 GitHub Release 并打印一条 warning，不会失败——这样首次发布前也能先把 Release 建起来。
-- **仓库写权限**：工作流已声明 `permissions: contents: write`，用的是自动注入的 `GITHUB_TOKEN`，不需要额外配置。
+仓库 secret **`NPM_TOKEN`**：在 [npmjs.com](https://www.npmjs.com/settings/tokens) 建一个 **Granular Access Token**，填法有三处不能错：
+
+- **Packages and scopes → Permissions** 选 **Read and write**（选默认的 "No access" 会在 publish 时 403）；
+- **Bypass two-factor authentication (2FA)** 必须勾上——CI 里没人能输验证码，不勾会以 `EOTP` 失败；
+- **Expiration** 最长只能 90 天（npm 自 2025-10 起对写权限的 granular token 硬限），到期前要换新的。
+
+> 顺带一句：npm 已在 2025-11 撤掉全部 classic token 并停止生成。网上很多教程还在教 **Automation** 类型，这个类型现在不存在了，只有 granular token。
+
+存 secret（token 走 stdin，不落 shell 历史）：
+
+```bash
+gh secret set NPM_TOKEN --repo <owner>/<repo>
+```
+
+没有配 `NPM_TOKEN` 时，工作流只建 GitHub Release 并打印一条 warning，不会失败——首次发布前也能先把 Release 建起来。
+
+**仓库写权限**：工作流已声明 `permissions: contents: write`，用的是自动注入的 `GITHUB_TOKEN`，不需要额外配置。
+
+> 想彻底免掉 token 轮换，可改用 npm 的 [Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers)：在 npm 包设置里登记仓库与 workflow 名，CI 用一次性短期凭据直接发布。本工作流已声明 `id-token: write`，届时删掉 `NODE_AUTH_TOKEN` 那段即可。
 
 手动补发某个已存在的 tag：`gh workflow run release -f tag=v3.2.0`。
 
