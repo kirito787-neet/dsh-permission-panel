@@ -38,6 +38,23 @@ function gitArgs(list) {
 	return GIT_PROXY === "" ? list : ["-c", "http.proxy=" + GIT_PROXY, ...list];
 }
 
+/*
+ * Windows 上必须走 cmd 才能找到 `npm.cmd`，而 `shell: true` 会让 Node 把参数
+ * 数组用空格拼成一条命令行、**不加引号**。于是 `-m "chore(release): v3.3.0"`
+ * 被 cmd 按空格切成两个词，git 会把 `v3.3.0` 当成 pathspec 并直接报
+ * `error: pathspec 'v3.3.0' did not match any file(s) known to git`。
+ * 所以走 shell 时自己给每个参数补引号。
+ */
+function shellQuote(argument) {
+	if (process.platform !== "win32") return argument;
+	return '"' + argument.replace(/"/gu, '\\"') + '"';
+}
+
+/** 把参数数组转成一条安全的命令行（非 Windows 原样交给 spawn 的数组形式）。 */
+function commandLine(command, commandArgs) {
+	return [command, ...commandArgs.map(shellQuote)].join(" ");
+}
+
 /** 在仓库根目录跑一条命令，失败即整体退出。 */
 function run(command, commandArgs, options = {}) {
 	const shown = [command, ...commandArgs].join(" ");
@@ -46,12 +63,16 @@ function run(command, commandArgs, options = {}) {
 		return;
 	}
 	console.log("$ " + shown);
-	const result = spawnSync(command, commandArgs, {
-		cwd: ROOT,
-		encoding: "utf8",
-		shell: process.platform === "win32",
-		stdio: options.capture === true ? ["ignore", "pipe", "pipe"] : "inherit",
-	});
+	const result = spawnSync(
+		process.platform === "win32" ? commandLine(command, commandArgs) : command,
+		process.platform === "win32" ? [] : commandArgs,
+		{
+			cwd: ROOT,
+			encoding: "utf8",
+			shell: process.platform === "win32",
+			stdio: options.capture === true ? ["ignore", "pipe", "pipe"] : "inherit",
+		},
+	);
 	if (result.status !== 0) {
 		if (options.capture === true) {
 			process.stderr.write((result.stdout ?? "") + (result.stderr ?? ""));
@@ -63,11 +84,15 @@ function run(command, commandArgs, options = {}) {
 
 /** 读取一条命令的标准输出（用于问 git 状态）。 */
 function capture(command, commandArgs) {
-	const result = spawnSync(command, commandArgs, {
-		cwd: ROOT,
-		encoding: "utf8",
-		shell: process.platform === "win32",
-	});
+	const result = spawnSync(
+		process.platform === "win32" ? commandLine(command, commandArgs) : command,
+		process.platform === "win32" ? [] : commandArgs,
+		{
+			cwd: ROOT,
+			encoding: "utf8",
+			shell: process.platform === "win32",
+		},
+	);
 	if (result.status !== 0) {
 		console.error("命令失败: " + [command, ...commandArgs].join(" ") + "\n" + (result.stderr ?? ""));
 		process.exit(result.status ?? 1);
