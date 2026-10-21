@@ -102,52 +102,67 @@ node -e "console.log(Object.keys(require('dsh-permission-panel/package.json').ex
 
 **包能安装、入口能解析、功能验证通过，才算完整发布验收。** 只看 Actions 绿灯不算。
 
-## 六、已知的历史状态（截至 3.3.0 事件）
+补充一条容易漏的：**比对包内文件与 tag 的字节一致性**。`npm view` 只能告诉你「有版本」，不能告诉你「发的是不是那份代码」。三行命令即可：
+
+```bash
+npm pack dsh-permission-panel@<版本> --pack-destination /tmp
+mkdir -p /tmp/a /tmp/b && tar -xzf /tmp/dsh-permission-panel-<版本>.tgz -C /tmp/a
+git worktree add --detach /tmp/b <tag>   # 或用 git archive
+diff -r /tmp/a/package /tmp/b <按 files 字段逐个比>
+```
+
+更省事的办法是逐文件 `sha256sum` 对比（`index.js`、`client.js`、`cordis.patch.yml`、`README.md`、`package.json`、`LICENSE` 六个都要一致）。
+
+## 六、历史状态与 3.3.0 事件复盘
+
+**当前状态（2026-10-21 14:00 起）**
 
 | 项 | 值 |
 | --- | --- |
 | 默认分支 | `master` |
 | 已有 tag | `dsh`、`dsh-plugin`、`v2.0.0`、`v2.1.0`、`v3.0.0`、`v3.0.1`、`v3.0.2`、`v3.2.0`、`v3.3.0` |
-| npm `dist-tags.latest` | `3.2.0`（`3.3.0` **从未发布到 npm**） |
-| GitHub Release | `v3.3.0`（手工创建）、`v3.2.0`（Actions 创建） |
+| npm `dist-tags.latest` | `3.3.0` |
+| npm 上的版本 | `0.0.0-stage`、`3.2.0`、`3.3.0` |
+| GitHub Release | `v3.2.0`（Actions 创建）、`v3.3.0`（人工创建，见下文遗留问题） |
 
-**不一致点**：GitHub 上已有 `v3.3.0` 的 tag 和 Release，但 npm 上 latest 仍是 `3.2.0`。
+**复盘：3.3.0 为什么卡了两小时**
 
 **根因（已用日志与历史 workflow 逐条核对，不要再猜）**：
 
 1. **3.2.0 是用长期 token 发布的，不是 OIDC。** 发布 3.2.0 的那次 Actions（run `39593230999`，2026-10-21 11:36）用的是提交 `bd090793eb4f64b5bd803691c45a6ab7b6d0c83a`（`chore: 建立 npm 发布流水线`）里的 workflow，那版「发布到 npm」步骤是 `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` + `npm publish --access public --provenance`。
-2. **因此「3.2.0 有 provenance」不能证明 trusted publisher 登记过。** `--provenance` 需要 `id-token: write`，GitHub 会为**签名**签发一张 OIDC 令牌并产出 SLSA 证明书（所以证明书的 SAN 里确实写着 `release.yml@refs/heads/master`），但 npm 侧**认证**走的是 `NPM_TOKEN`。
-3. 2026-10-21 11:52 的提交 `ae482ed`（`ci(release): 切到 npm Trusted Publishing (OIDC)，移除 NPM_TOKEN 依赖`）才把 workflow 改成纯 OIDC。此后 v3.3.0 的两次发布都失败：
+2. **因此「3.2.0 有 provenance」不能证明 trusted publisher 登记过。** `--provenance` 需要 `id-token: write`，GitHub 会为**签名**签发一张 OIDC 令牌并产出 SLSA 证明书（所以证明书的 SAN 里确实写着 `release.yml@refs/heads/master`），但 npm 侧**认证**走的是 `NPM_TOKEN`。这是本次排查中代价最大的一个误判，不要再犯。
+3. 2026-10-21 11:52 的提交 `ae482ed`（`ci(release): 切到 npm Trusted Publishing (OIDC)，移除 NPM_TOKEN 依赖`）才把 workflow 改成纯 OIDC。此后 3.3.0 连续三次发布会失败：
    - run `39599726880`（`push` tag `v3.3.0`，12:27）；
-   - run `39601437727`（`workflow_dispatch`，12:40，`head_sha` `05b12156`）。
-   
-   两次都卡在 `npm publish` 的 OIDC 交换：
+   - run `39601437727`（`workflow_dispatch`，12:40，`head_sha` `05b12156`）；
+   - run `39611579891`（`workflow_dispatch` 跑加固后的 workflow，13:50）。
+
+   三次都卡在同一步：
    ```
    npm http fetch POST 404 https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/dsh-permission-panel
    npm verbose oidc Failed token exchange request with body message: OIDC token exchange error - package not found
    npm error code ENEEDAUTH
    ```
-   同一次 run 里前面的断言全部通过（`NODE_AUTH_TOKEN is <unset>`、`OIDC request endpoint present`、`npm 11.19.1`、`version ok: 3.3.0`），测试也全绿——**所以这不是 workflow 代码的问题**。`oidc/token/exchange/package/<name>` 返回 `404 package not found`，是 npm 对「该包没有任何 matching trusted publisher 登记」的标准（且刻意含糊的）应答。
-4. **结论：trusted publisher 从未登记成功过。** 3.3.0 因此从未上 npm；GitHub 上那个 `v3.3.0` Release 是作者本人（`kirito787-neet`，不是 `github-actions[bot]`）在 12:27 手工补建的。
+   同一次 run 里前面的断言全部通过（`NODE_AUTH_TOKEN is <unset>`、`OIDC request endpoint present`、`npm 11.19.x`、`version ok: 3.3.0`），测试也全绿——**这不是 workflow 代码的问题**。`oidc/token/exchange/package/<name>` 返回 `404 package not found`，是 npm 对「该包没有任何 matching trusted publisher 登记」的标准（且刻意含糊的）应答。
+4. **2026-10-21 13:57 在 npm 网页完成 trusted publisher 登记后，run `39612484326` 一次就通了**：`POST .../oidc/token/exchange/package/dsh-permission-panel` → **201**，`Successfully retrieved and set token`，`PUT https://registry.npmjs.org/dsh-permission-panel` → **202**。3.3.0 由此真正上了 npm。
 
-顺带清理：仓库 **Settings → Secrets and variables → Actions** 里如果还留着 `NPM_TOKEN`，请删掉——本流程已不使用它，留着只会在别处被误用。
+**这次 run 暴露的一个真实 bug（已修）**：publish 成功（202 已受理）之后，我们自己加的「核验 npm 上的实际发布结果」步骤只给了 5 次 × 10 秒 = 50 秒预算，而 registry **全文可查**要到 `13:59:04` 才出现——从 `PUT 202`（`13:57:46`）算起约 **80 秒**传播延迟。结果 publish 明明成功，run 却被自己的核验步骤判成红色。已把预算改成 **20 次 × 15 秒（5 分钟）**并写明依据（提交 `ea8f010`）。教训：**registry 写入是异步传播的，核验步骤的等待预算必须大于实测传播延迟**，否则会把成功误报成失败。
 
-**新工作流已在真实 Actions 上验证过（2026-10-21 13:50，run `39611579891`）**：用 `gh workflow run release --ref chore/npm-release-hardening -f tag=v3.3.0` 跑这一版改动后的 workflow，结果是——
+修完后重跑 run `39612925576` 为全绿，走的是「该版本已在 npm 上 → 跳过发布、只补核验与 Release」这条路径，验证了半成品状态可以安全收尾。
 
-- `测试` job **全绿**：`npm test` 8 个测试 + 新增的「校验发布包内容」(`npm pack --dry-run --json`) 都 success；
-- `发布` job 的前 6 步（清 token / npm 版本闸门 / tag 与 version 一致 / **检查该版本是否已在 npm 上**）全部 success，其中新加的检查步骤正确输出 `version 3.3.0 not published yet`；
-- 第 7 步 `npm publish --access public --provenance --loglevel verbose` **仍然失败，且是与之前一模一样的 404**：
-  ```
-  npm http fetch GET  .../idtoken/*** 200
-  npm http fetch POST 404 https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/dsh-permission-panel
-  npm verbose oidc Failed token exchange request with body message: OIDC token exchange error - package not found
-  npm error code ENEEDAUTH
-  ```
-- 之后「核验」「创建 GitHub Release」按设计 skipped，没有产生任何半截状态。
+**发布验收（已逐项核对，不只是看绿灯）**
 
-**这条运行记录的意义**：它把「不是 workflow 的 bug」从推断变成了实测——同一份代码、同一台 runner、OIDC 令牌拿到了（GET idtoken 200），失败点精确落在 npm 侧的包信任关系上。所以剩下唯一的动作就是第四节那次网页登记。
+- `npm view dsh-permission-panel version` → `3.3.0`；`dist-tags.latest` 已从 `3.2.0` 变为 `3.3.0`。
+- `dist.tarball` = `https://registry.npmjs.org/dsh-permission-panel/-/dsh-permission-panel-3.3.0.tgz`，shasum `b98e0bd4cb8f30416cf40eee84270eb49db86bda`。
+- `dist.attestations` predicateType = `https://slsa.dev/provenance/v1`，证明书里 `workflow.path = .github/workflows/release.yml`、`gitCommit = c081592`。
+- 临时目录真实 `npm install dsh-permission-panel@3.3.0`：6 个文件齐全，`require('dsh-permission-panel/package.json')` 的 `exports` 四项均可解析。
+- **包内 6 个文件的 SHA-256 与 tag `v3.3.0` 逐字节一致**（`index.js` `6c0aed25…`、`client.js` `33b60983…`、`cordis.patch.yml` `af2b64f3…`、`README.md` `6c9c70df…`、`package.json` `2551544b…`、`LICENSE` `c3d6b190…`），即 npm 上那一份确实就是 tag 指向的那一份代码。
 
-处理方式见第七节；**在 npm 上真的能看到 `3.3.0` 之前，不要用 3.3.0 之后的版本号继续发版**——否则 `v3.3.0` 这个 tag 永远对不上一个 npm 版本，历史会更难对齐。
+**两个遗留问题，别当没看见**
+
+1. **这次 3.3.0 是从分支 `chore/npm-release-hardening` 的 ref 发布的**，所以证明书里的 `ref` 与 `resolvedDependencies` 都写着 `refs/heads/chore/npm-release-hardening`、`gitCommit=c081592`，而不是 `refs/heads/master`。工作流本身对 ref 没有限制（tag 是快照，代码内容已被上面的 hash 比对证明一致），但**今后补发请在 `master` 上触发**，让证明书与分支历史保持一致。
+2. **`v3.3.0` 的 GitHub Release 是 12:27 人工建的，比 npm 上真实发布（13:57）早了 90 分钟**，它的 body 也是手写的。这是本项目唯一一次「Release 早于 npm 版本」的例外，**不要当成先例**——正常路径永远是 `gh release create` 排在 `npm publish` 与核验之后。
+
+顺带清理：仓库 **Settings → Secrets and variables → Actions** 里如果还留着 `NPM_TOKEN`，请删掉——本流程已不使用它（当前 `gh secret list` 已为空）。
 
 ## 七、失败恢复
 

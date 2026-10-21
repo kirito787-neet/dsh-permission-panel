@@ -15,7 +15,7 @@
 
 先按 [docs/RELEASING.md](docs/RELEASING.md) 核对 `package.json`、工作流、Git 标签历史与 npm 上的实际版本。本项目是**根目录单包、npm、默认分支 `master`、零运行时依赖、零构建步骤**——不要添加 `npm ci`、`npm run build`、锁文件或 devDependencies，除非项目确实新增了依赖或构建步骤（届时 workflow 与文档要同步更新）。
 
-**当前已知的历史不一致（先读 [docs/RELEASING.md](docs/RELEASING.md) 第六节）**：npm 上 `latest` 仍是 `3.2.0`，而 GitHub 上已有 `v3.3.0` 的 tag 与 Release。原因是 `3.2.0` 之后工作流改用 OIDC，但 npm 侧 trusted publisher 从未登记成功（`404 package not found`）。在这条修好、`npm view dsh-permission-panel version` 能看到 `3.3.0` 之前，**不要用 3.3.0 之后的版本号继续发版**。
+**发布链路当前是通的（2026-10-21 13:57 起）**：npm 侧 trusted publisher 已登记，`dsh-permission-panel@3.3.0` 经 OIDC 真实发布成功，`npm view dsh-permission-panel version` 返回 `3.3.0`。历史上 `3.2.0` 是旧 token 流程发的，`3.3.0` 卡过两小时（`404 package not found`），复盘与遗留问题见 [docs/RELEASING.md](docs/RELEASING.md) 第六节——**其中一条仍然有效：补发已存在的 tag 请在 `master` 上触发**（`gh workflow run release -f tag=vX.Y.Z`），不要在侧分支上发，否则 provenance 证明书里的 ref 会指向那个分支。
 
 ## 日常更新
 
