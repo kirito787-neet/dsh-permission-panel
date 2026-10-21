@@ -20,7 +20,7 @@ on:
 
 permissions:
   contents: write # 创建 GitHub Release
-  id-token: write # npm Trusted Publishing 的 OIDC 凭据（顺带自动产出 provenance）
+  id-token: write # npm Trusted Publishing 的 OIDC 凭据（签名与 provenance 都要用它）
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -159,7 +159,7 @@ jobs:
             echo "::error::说明 npm 侧还没有为本仓库登记 trusted publisher（这是账号本人的网页操作，CI 无法代做）。"
             echo "::error::打开 https://www.npmjs.com/package/${NPM_PACKAGE}/access ，在 Trusted Publisher 里添加 GitHub Actions："
             echo "::error::   Organization or user = ${GITHUB_REPOSITORY_OWNER} ，Repository = ${GITHUB_REPOSITORY#*/} ，Workflow filename = release.yml"
-            echo "::error::并在 Allowed actions 里勾上 npm publish。登记后重跑本工作流（新建的配置要在 2 天内完成首次发布，否则会过期）。"
+            echo "::error::并在 Allowed actions 里勾上 npm publish。登记后重跑本工作流（新建的配置要在 48 小时内完成首次发布，否则会过期）。"
             echo "::error::若出现 'Skipped because incorrect permissions for id-token'，则是 job 缺 id-token: write（本文件已有，检查是否被组织策略覆盖）。"
             exit 1
           fi

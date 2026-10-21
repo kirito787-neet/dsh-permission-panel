@@ -6,11 +6,14 @@
 
 ```
 本地 npm run release <patch|minor|major|x.y.z>
-        └─ 校验分支/工作树/是否落后 → 改 package.json 版本 → npm test → commit + annotated tag
+        └─ 校验分支/工作树/是否落后 → 改 package.json 版本 → npm test → npm pack --dry-run → commit + annotated tag
 git push origin master --follow-tags
         └─ .github/workflows/release.yml
-              job 测试 : 在 tag 指向的提交上再跑 npm test + npm pack --dry-run
-              job 发布 : 校验 tag == package.json version → npm publish（Trusted Publishing / OIDC）
+              job 测试 : 在 tag 指向的提交上再跑 npm test + npm pack --dry-run --json
+              job 发布 : 校验 tag == package.json version
+                         → 查该版本是否已在 npm（在则跳过 publish）
+                         → npm publish --provenance（Trusted Publishing / OIDC）
+                         → 回读 npm 核验版本与 tarball
                          → gh release create <tag>
 ```
 
@@ -46,10 +49,12 @@ git push origin master --follow-tags
 
 推上去之后：
 
-1. `job 测试` 在 **tag 指向的提交** 上重跑 `npm test` —— tag 指向的代码必须自己是绿的；再跑 `npm pack --dry-run` 确认包内文件清单没有意外增删（例如把 `.gitignore` 里的东西打进包、或漏掉 `client.js`）。
+1. `job 测试` 在 **tag 指向的提交** 上重跑 `npm test` —— tag 指向的代码必须自己是绿的；再跑 `npm pack --dry-run --json` 确认包内文件清单没有意外增删（例如把 `.gitignore` 里的东西打进包、或漏掉 `client.js`）。
 2. `job 发布` 先做三项前置断言：没有残留 `NODE_AUTH_TOKEN`、`ACTIONS_ID_TOKEN_REQUEST_URL` 存在（即 `id-token: write` 生效）、npm CLI ≥ 11.5.1；再校验 `tag` 与 `package.json` 的 `version` 是同一个数字（对不上直接失败，因为 npm 不允许覆盖已发布版本）。
-3. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public --loglevel verbose`。仓库里没有任何 npm 长期密钥。
-4. `gh release create <tag> --verify-tag --generate-notes`。已存在则跳过。
+3. 查一次该版本是否已在 npm 上：已在就**跳过 publish**，直接往下走核验与补建 Release（重跑一个「npm 有了、Release 没建成」的半截状态不会撞 `E403`）。
+4. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public --provenance --loglevel verbose`。仓库里没有任何 npm 长期密钥。`--provenance` 显式写（原因见第四节第三个坑）。
+5. **回读 npm 核验**：`npm view <包>@<版本> version` 必须查得到、`dist.tarball` 必须存在；provenance 读得到就记 notice，读不到只 warning 不阻断。publish 返回 0 不等于发布成功。
+6. `gh release create <tag> --verify-tag --generate-notes`。已存在则跳过。
 
 ## 四、npm 侧一次性配置：Trusted Publisher
 
@@ -65,7 +70,7 @@ git push origin master --follow-tags
 5. **Environment name 留空**（本工作流没有使用 GitHub Environments，填了会让 OIDC 的 `sub` 声明对不上）
 6. 保存
 
-三个容易踩的坑：
+四个容易踩的坑：
 
 - **新建的配置有 48 小时有效期**：登记后必须在 48 小时内成功发布一次，配置才会被标记为「已验证」并免于过期；超时会过期作废（仍显示在设置页里，但不计数、也不能授权发布），只能删掉重建。改仓库或项目身份会重新开始一个 48 小时窗口；普通编辑不会重置。见 [GitHub Changelog 2026-10-02](https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire/)。
 - **`setup-node` 的 `registry-url` 会毒化 OIDC**：只要给 `actions/setup-node` 传了 `registry-url`，它就会写一行 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` 到 `.npmrc`，并把该变量导出成占位值。npm 见到「有凭据」就**根本不做 OIDC 交换**，报 `npm error code ENEEDAUTH`。所以 workflow **刻意不传** `registry-url`，并额外 `unset NODE_AUTH_TOKEN` 兜底。
