@@ -173,14 +173,16 @@ jobs:
         run: |
           version="$(node -p "require('./package.json').version")"
           echo "expect: ${NPM_PACKAGE}@${version}"
+          # 实测：publish 返回 202 到 registry 全文可查有 ~80 秒的传播延迟（不是失败）。
+          # 所以这里给到 5 分钟预算，避免把「还在传播」误判成「没发上去」。
           actual=""
-          for i in 1 2 3 4 5; do
+          for i in $(seq 1 20); do
             actual="$(npm view "${NPM_PACKAGE}@${version}" version 2>/dev/null || true)"
             if [ "$actual" = "$version" ]; then
               break
             fi
-            echo "第 ${i} 次查询未就绪（actual='${actual}'），10 秒后重试"
-            sleep 10
+            echo "第 ${i}/20 次查询未就绪（actual='${actual}'），15 秒后重试"
+            sleep 15
           done
           if [ "$actual" != "$version" ]; then
             echo "::error::npm 上查不到 ${NPM_PACKAGE}@${version}（实际: '${actual}'）。publish 报了成功但 registry 没有这个版本，先查 npm 状态再决定是否重发。"
