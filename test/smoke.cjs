@@ -110,6 +110,16 @@ if (captured === null) throw new Error("client.js never called __ModuleLoader__.
 // A fixture that still served the removed snapshots would pass while the shipped
 // plugin throws, which is the exact trap this suite exists to avoid.
 const permissionsOf = (currentValue) => ({ currentValue });
+/*
+ * The Host's live permission state per Session, as the panel would see it
+ * through a cold read. This is deliberately a MUTABLE map, not constants:
+ * `commands.execute` writes here when it accepts `/permission <preset>`, so a
+ * later projection read returns the new value the way the real Host would.
+ * Without that loop the suite could not tell "re-read and show the truth" from
+ * "show the value I optimistically recorded after my own command".
+ */
+const hostPresets = new Map([["s1", "workspace-write"], ["s2", "read-only"]]);
+const hostTitles = new Map([["s1", "Session A"], ["s2", "Session B"]]);
 
 /**
  * The visible Session rows.
@@ -150,20 +160,41 @@ const fakeScope = {
       /*
        * A cold per-Session read. `s3` is archived, so the panel must never ask
        * for it; the fixture records every request so a regression is visible.
+       *
+       * The answer is PER SESSION, not one canned row: the current-policy card
+       * shows the value this read returned, so a stub that answered "Session B"
+       * for every id would make the card prove nothing.
        */
       projections: async (request) => {
         projectionReads.push(request.sessionId);
-        return { ok: true, value: { kind: "sequenced", asOfSeq: 1, values: { title: "Session B", permissions: permissionsOf("read-only") } } };
+        const values = { title: hostTitles.get(request.sessionId) ?? request.sessionId };
+        const preset = hostPresets.get(request.sessionId);
+        if (preset !== undefined) values.permissions = permissionsOf(preset);
+        return { ok: true, value: { kind: "sequenced", asOfSeq: 1, values } };
       },
     },
     /*
-     * The archive set. `WorkspaceBaseline.archivedSessionIds` is the only field
-     * this plugin reads; `follow` is an async stream that opens with a baseline.
+     * The archive set AND the Workspace rows arrive on the same stream.
+     *
+     * Two Workspaces with one member each, so grouping is real: a flat list would
+     * hide a regression where `workspace.sessionIds` is ignored (the grouping has
+     * to come from that authoritative membership relation, never from comparing
+     * `cwd` strings). `s3` is archived and belongs to neither.
      */
     workspace: {
       follow: async function* (signal) {
         archiveSignals.push(signal);
-        yield { type: "baseline", value: { items: [], archivedSessionIds: ["s3"], pinnedSessionIds: [] } };
+        yield {
+          type: "baseline",
+          value: {
+            items: [
+              { workspaceId: "w1", path: "H:/work/a", title: "Alpha", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 },
+              { workspaceId: "w2", path: "H:/work/b", title: "Beta", sessionIds: ["s2"], createdAt: 2, updatedAt: 2 },
+            ],
+            archivedSessionIds: ["s3"],
+            pinnedSessionIds: [],
+          },
+        };
       },
     },
     /*
@@ -185,6 +216,13 @@ const fakeScope = {
           return { ok: false, error: { code: "gateway/input-invalid", message: "wire field \"agentId\" failed boundary validation" } };
         }
         commandCalls.push({ target, line });
+        /*
+         * Accepting `/permission <preset>` must actually change the Host state the
+         * next cold read sees. Otherwise "the card re-reads after a switch" is
+         * untestable: both a re-read and a stale echo would display the same text.
+         */
+        const match = /^\/permission (.+)$/u.exec(line);
+        if (match !== null) hostPresets.set(target, match[1]);
         return { ok: true, value: { commandId: "c", result: { kind: "success" } } };
       },
     },
@@ -195,14 +233,20 @@ const fakeScope = {
       update: async () => ({ ok: true, value: settingsView.namespaces[0] }),
     },
     // The process-level preset catalog: the ONLY source of selectable presets.
+    /*
+     * `description` is the Host's own prose for what a preset means. The panel
+     * is forbidden from inventing it (the sandbox/approval knobs have no client
+     * wire), so the current-policy card can only quote this field — the fixture
+     * supplies distinct text per preset so quoting is provable.
+     */
     permissionPresets: {
       catalog: async () => ({
         ok: true,
         value: {
           options: [
-            { value: "read-only", name: "read-only" },
-            { value: "workspace-write", name: "workspace-write" },
-            { value: "danger-full-access", name: "danger-full-access" },
+            { value: "read-only", name: "read-only", description: "Reads only; no writes and no commands." },
+            { value: "workspace-write", name: "workspace-write", description: "Writes inside the workspace; asks before leaving it." },
+            { value: "danger-full-access", name: "danger-full-access", description: "Unrestricted writes and commands." },
           ],
           defaultOptions: [{ value: "read-only", name: "read-only" }],
           defaultPreset: "read-only",
@@ -243,6 +287,17 @@ const PRESET_LABELS = {
    * the raw key would pass for any count, including none.
    */
   wpSelectedCount: "{n} selected",
+  /*
+   * The search/grouping templates the new toolbar renders. Same reason as above:
+   * the suite has to read the RENDERED count, so the template must be resolved.
+   */
+  wpSearchCount: "{n} / {total} matching",
+  wpSearchEmpty: "No matching sessions.",
+  wpGroupCount: "{n} session(s)",
+  wpSelectAllLabel: "Select all",
+  wpSelectGroup: "Select every session in this workspace",
+  wpSelectAll: "Select every manageable session",
+  wpSelectAllVisible: "Select all {n} visible sessions",
 };
 const translate = (key) => PRESET_LABELS[key] ?? key;
 
@@ -954,6 +1009,225 @@ const openDropdown = (index) => {
    */
   if (keydownListeners.length !== keydownBeforeHeader) {
     throw new Error("case 16: the closed header button added " + (keydownListeners.length - keydownBeforeHeader) + " keydown listener(s)");
+  }
+
+  // ---- case 17: the current session's effective policy is displayed ----
+  /*
+   * The user asked to SEE what is actually in effect, because a changed preset
+   * otherwise only shows up as "I clicked something and I hope it worked".
+   *
+   * This case opens the Session-header entry for `s1` and asserts two separate
+   * facts: the card names the Session and its preset, and it carries the Host's
+   * own policy prose. The prose can only come from the catalog Remote (the
+   * sandbox/approval knobs have no wire), so a value invented locally fails here.
+   */
+  hookSlots.clear();
+  firstHeaderPass = false;
+  projectionReads.length = 0;
+  /*
+   * Put the Host on a value the list hint does NOT carry: `s1`'s list row says
+   * `workspace-write`, while the live Host state below says `danger-full-access`
+   * (an earlier case already switched `s1` away from its original value). If the
+   * card ever rendered the hint, an optimistic record, or a canned answer, the
+   * preset and the description would disagree with this value.
+   */
+  hostPresets.set("s1", "danger-full-access");
+  headerTree = renderHeader();
+  await flush();
+  const policyTrigger = collect(headerTree, (entry) => entry.props?.className?.includes("dshk-wpEntry"))[0];
+  if (policyTrigger === undefined) throw new Error("case 17: the header button vanished");
+  policyTrigger.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  /*
+   * Two renders, deliberately. The first one runs the panel's effects, which
+   * START the forced cold read; the answer arrives on a later microtask. A tree
+   * captured before that settles is a photograph of the pre-read state — the
+   * exact "stale value" the card exists to eliminate. Re-render after `flush`
+   * so the assertions read what the user ends up seeing.
+   */
+  renderHeader();
+  await flush();
+  const policyTree = renderHeader();
+  await flush();
+  const policyCards = collect(policyTree, (entry) => entry.props?.className?.split(" ").includes("dshk-current"));
+  const policyCard = policyCards[0];
+  if (policyCard === undefined) {
+    throw new Error("case 17: the panel for a Session rendered no current-policy card; saw " + JSON.stringify(explain(policyTree).slice(0, 400)));
+  }
+  const policyText = explain(policyCard);
+  if (!policyText.includes("Session A")) {
+    throw new Error("case 17: the current-policy card does not say which Session it describes; saw " + JSON.stringify(policyText));
+  }
+  if (!policyText.includes("danger-full-access")) {
+    throw new Error("case 17: the current-policy card does not show the Session's real preset; saw " + JSON.stringify(policyText));
+  }
+  if (!policyText.includes("Unrestricted writes and commands")) {
+    throw new Error("case 17: the current-policy card does not show the Host's policy description; saw " + JSON.stringify(policyText));
+  }
+  /*
+   * A forced cold read is what makes the card evidence rather than echo: the
+   * panel's own recorded value would survive a change made elsewhere. `s1` must
+   * therefore appear in the projection reads even though its list hint already
+   * carried a preset.
+   */
+  if (!projectionReads.includes("s1")) {
+    throw new Error("case 17: the panel never re-read the shown Session's projection; saw " + JSON.stringify(projectionReads));
+  }
+  /* Close it again so later cases start from the collapsed header button. */
+  const policyClose = collect(policyTree, (entry) => entry.props?.className?.includes("dshk-wpClose"))[0];
+  if (policyClose !== undefined) policyClose.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  headerTree = renderHeader();
+
+  // ---- case 18: search filters rows and reports the count ----
+  /*
+   * Two rows fit on screen; a real user has dozens. Search must narrow the LIST
+   * (not just highlight), and the heading must say how many matched, because a
+   * filtered list that still claims "2" is indistinguishable from a broken filter.
+   */
+  hookSlots.clear();
+  let searchTree = renderOnce(true);
+  await flush();
+  const searchBox = () => collect(searchTree, (entry) => entry.props?.className === "dshk-wpSearch")[0];
+  if (searchBox() === undefined) throw new Error("case 18: the session list has no search box");
+  searchBox().props.onChange({ target: { value: "session b" } });
+  searchTree = renderOnce(false);
+  const matchedRows = collect(searchTree, (entry) => entry.props?.className === "dshk-wpRow");
+  if (matchedRows.length !== 1 || !explain(matchedRows[0]).includes("Session B")) {
+    throw new Error("case 18: searching for 'session b' did not narrow the list to Session B; saw " + JSON.stringify(matchedRows.map(explain)));
+  }
+  if (!explain(searchTree).includes("1 / 2 matching")) {
+    throw new Error("case 18: the heading does not report the match count; saw " + JSON.stringify(explain(searchTree).slice(0, 400)));
+  }
+  /*
+   * A query that matches nothing must say so. Rendering an empty list under a
+   * heading that still counts rows is the failure mode users read as "it broke".
+   */
+  searchBox().props.onChange({ target: { value: "no such session" } });
+  searchTree = renderOnce(false);
+  if (!explain(searchTree).includes("No matching sessions")) {
+    throw new Error("case 18: an empty search result rendered no explanation");
+  }
+  searchBox().props.onChange({ target: { value: "" } });
+  searchTree = renderOnce(false);
+  if (collect(searchTree, (entry) => entry.props?.className === "dshk-wpRow").length !== 2) {
+    throw new Error("case 18: clearing the search did not restore every row");
+  }
+
+  // ---- case 19: select-all covers exactly the visible rows ----
+  /*
+   * The complaint was "clicking one by one until my hand cramps". Select-all
+   * therefore has to be one click, and its EFFECT must be scoped to the rows on
+   * screen: under a filter it may only ever write the matches.
+   *
+   * Note what this case does and does not prove. The panel enforces the scoping
+   * twice — the control is handed the visible rows, and separately the effective
+   * selection is intersected with the visible set on every read. Because of that
+   * redundancy, a mutation that wires the control to the unfiltered list is NOT
+   * observable here (the intersection masks it), and this case must not pretend
+   * otherwise. What it pins down is the guarantee the user cares about: a hidden
+   * Session is never part of a bulk write, in either order of filtering and
+   * selecting.
+   */
+  hookSlots.clear();
+  let allTree = renderOnce(true);
+  await flush();
+  const selectAllBox = () => collect(allTree, (entry) => entry.props?.className === "dshk-pickAll")[0];
+  const searchInput = () => collect(allTree, (entry) => entry.props?.className === "dshk-wpSearch")[0];
+  if (selectAllBox() === undefined) throw new Error("case 19: the list has no select-all control");
+  selectAllBox().props.onChange();
+  allTree = renderOnce(false);
+  const allBar = collect(allTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (allBar === undefined) throw new Error("case 19: select-all did not reveal the bulk bar");
+  if (!/\b2\b/u.test(explain(allBar))) {
+    throw new Error("case 19: select-all did not claim both rows; saw " + JSON.stringify(explain(allBar)));
+  }
+  /* Selecting everything, then filtering: the count has to fall with the list. */
+  searchInput().props.onChange({ target: { value: "session a" } });
+  allTree = renderOnce(false);
+  const filteredBar = collect(allTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (filteredBar === undefined) {
+    throw new Error("case 19: filtering away a selected row dropped the whole selection instead of pruning it");
+  }
+  if (!/\b1\b/u.test(explain(filteredBar)) || /\b2\b/u.test(explain(filteredBar))) {
+    throw new Error("case 19: the selection was not pruned to the visible rows; saw " + JSON.stringify(explain(filteredBar)));
+  }
+  /*
+   * Clearing the filter must not resurface the tick that was hidden meanwhile.
+   * An implementation that only intersects on read (and never drops the hidden
+   * tick) still passes this, so this too is a guarantee test, not a mechanism
+   * test — but it is the guarantee that stops "I filtered, selected, applied,
+   * and it changed a Session I had filtered out".
+   */
+  searchInput().props.onChange({ target: { value: "" } });
+  allTree = renderOnce(false);
+  const clearedBar = collect(allTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (clearedBar === undefined) {
+    throw new Error("case 19: clearing the filter dropped the selection entirely");
+  }
+  if (/\b2\b/u.test(explain(clearedBar))) {
+    throw new Error("case 19: a filtered-away Session came back selected; saw " + JSON.stringify(explain(clearedBar)));
+  }
+  /*
+   * Reset to an empty selection before the next phase. After clearing the filter
+   * only one row is still ticked, so a single click on select-all ADDS the other
+   * row (the control is "all on?" — not "empty?"), and a second click clears.
+   */
+  selectAllBox().props.onChange();
+  allTree = renderOnce(false);
+  selectAllBox().props.onChange();
+  allTree = renderOnce(false);
+  /* Filtering FIRST and selecting then: still only the visible row. */
+  searchInput().props.onChange({ target: { value: "session a" } });
+  allTree = renderOnce(false);
+  if (collect(allTree, (entry) => entry.props?.className === "dshk-bulk").length !== 0) {
+    throw new Error("case 19: the selection did not reset before the filter-first phase");
+  }
+  selectAllBox().props.onChange();
+  allTree = renderOnce(false);
+  const scopedBar = collect(allTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (scopedBar === undefined) throw new Error("case 19: select-all under a filter selected nothing");
+  if (!/\b1\b/u.test(explain(scopedBar)) || /\b2\b/u.test(explain(scopedBar))) {
+    throw new Error("case 19: select-all under a filter reached beyond the visible rows; saw " + JSON.stringify(explain(scopedBar)));
+  }
+  searchInput().props.onChange({ target: { value: "" } });
+  allTree = renderOnce(false);
+  selectAllBox().props.onChange(); // clear for the next case
+  allTree = renderOnce(false);
+
+  // ---- case 20: rows are grouped by Workspace, with its own select-all ----
+  /*
+   * Grouping is the third ask. The membership has to come from
+   * `workspace.sessionIds` (the registry's owner relation), never from `cwd`:
+   * the two disagree routinely and a cwd-derived heading would silently file a
+   * session under the wrong Workspace.
+   */
+  hookSlots.clear();
+  let groupTree = renderOnce(true);
+  await flush();
+  const groupHeads = collect(groupTree, (entry) => entry.props?.className === "dshk-wpGroupHead");
+  if (groupHeads.length !== 2) {
+    throw new Error("case 20: expected one heading per Workspace (2), saw " + groupHeads.length + ": " + JSON.stringify(groupHeads.map(explain)));
+  }
+  const alphaHead = groupHeads.find((head) => explain(head).includes("Alpha"));
+  const betaHead = groupHeads.find((head) => explain(head).includes("Beta"));
+  if (alphaHead === undefined || betaHead === undefined) {
+    throw new Error("case 20: the group headings do not name their Workspaces; saw " + JSON.stringify(groupHeads.map(explain)));
+  }
+  if (!explain(alphaHead).includes("1")) {
+    throw new Error("case 20: a group heading does not report its member count");
+  }
+  /*
+   * Each group carries its own select-all, which is what makes "this whole
+   * workspace" one click. Asserted by ticking Alpha's box and checking the bulk
+   * bar counts exactly one session, not two.
+   */
+  const alphaBox = collect(alphaHead, (entry) => entry.props?.className === "dshk-pickAllGroup")[0];
+  if (alphaBox === undefined) throw new Error("case 20: a group heading offers no group-level select-all");
+  alphaBox.props.onChange();
+  groupTree = renderOnce(false);
+  const groupBar = collect(groupTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (groupBar === undefined) throw new Error("case 20: the group select-all did not reveal the bulk bar");
+  if (!/\b1\b/u.test(explain(groupBar))) {
+    throw new Error("case 20: the group select-all did not select exactly that group's member; saw " + JSON.stringify(explain(groupBar)));
   }
 
   console.log(
