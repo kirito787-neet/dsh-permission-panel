@@ -139,63 +139,19 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 
 ## 发布
 
-发版以 **git tag 为准**，不从分支自动发：tag 是不可变的快照，事后能回答「npm 上那个版本到底是哪份代码」。落在分支上的自动发布会把每个普通提交都变成一个版本号。
+> 这一节是给**维护者**看的。只是想用插件的话，`dsh plugin --profile <profile> add dsh-permission-panel` 就够了。
+
+发版以 **git tag 为准**，不从分支自动发：tag 是不可变的快照，事后能回答「npm 上那个版本到底是哪份代码」。发布用 **Trusted Publishing (OIDC)**，仓库里没有任何 npm 长期密钥。
 
 ```bash
-# 本地：改版本号 → 跑测试 → 核对包内容 → 提交 → 打 tag
-npm run release patch        # 3.3.0 → 3.3.1；也接受 minor / major / 3.4.1
-
-# 推送，触发 CI
+npm run release patch        # 改版本号 → 跑测试 → 核对包内容 → 提交 → 打 tag
 git push origin master --follow-tags
 ```
 
-前置检查（工作树干净、当前在 `master`、不落后 `origin/master`、目标 tag 尚不存在）不满足时，脚本会在改动任何文件之前退出；`--dry-run` 不写任何字节。
+CI 会重跑 `npm test` 与 `npm pack --dry-run`、校验 tag 与 `package.json` 版本一致、用 OIDC 发布、回读 npm 核验 `version` 与 `dist.tarball`，最后建 GitHub Release；任一步失败后续不执行，所以不会出现「GitHub 上有版本、npm 上没有」的假象。
 
-推送后 `.github/workflows/release.yml` 依次执行：
-
-1. `npm test` —— tag 指向的代码必须自己是绿的；
-2. `npm pack --dry-run --json` —— 核对真正会发出去的文件清单（少了 `client.js` 插件装得上但界面是空的）；
-3. 确认 CI 的 npm CLI ≥ 11.5.1（Trusted Publishing 的下限）；
-4. 校验 tag 与 `package.json` 的 `version` 一致；
-5. 若该版本已在 npm 上则跳过发布（重跑一个「npm 已有、Release 未建」的半成品不会撞 `E403`）；
-6. 用 **Trusted Publishing (OIDC)** 执行 `npm publish --access public --provenance --loglevel verbose`；
-7. 回读 npm 核验 `version` 与 `dist.tarball`，provenance 缺失只告警不阻断；
-8. `gh release create <tag> --generate-notes`。
-
-任一步失败，后续步骤不执行，因此不会出现「GitHub 上有版本、npm 上没有」的假象；反过来「npm 有、Release 没建成」重跑一次本工作流即可补齐。
-
-### 发布凭据：Trusted Publishing，没有长期密钥
-
-发布**不使用任何 npm token**，凭据来自 GitHub Actions 的 OIDC：每次发布会由 GitHub 签发一张短期、绑定「本仓库 + 本工作流 `release.yml`」的一次性 token，npm 侧用事先登记的 trusted publisher 关系验证。代价是需要账号本人（2FA）在网页登记一次，每个包一次：
-
-1. 打开 <https://www.npmjs.com/package/dsh-permission-panel/access> → **Trusted Publisher** → **GitHub Actions**；
-2. **Organization or user** `kirito787-neet`、**Repository** `dsh-permission-panel`、**Workflow filename** `release.yml`（只填文件名，不带 `.github/workflows/` 前缀）；
-3. **Allowed actions** 勾上 **npm publish**（不勾则 OIDC 身份只能做 stage publish，正式发布 403）；
-4. **Environment name** 留空；
-5. 保存。
-
-四个容易踩的坑：
-
-- **`setup-node` 的 `registry-url` 会毒化 OIDC**：它会往 `.npmrc` 写一行 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` 并把 `NODE_AUTH_TOKEN` 导成占位值。npm 看到「有凭据」就直接走 token 认证、**根本不尝试 OIDC**，报 `npm error code ENEEDAUTH`。本工作流刻意不传 `registry-url`，并额外 unset 一次 `NODE_AUTH_TOKEN` 兜底。
-- **配置有 48 小时有效期**：新建的 trusted publisher 必须在 48 小时内成功发布一次才会被标记为「已验证」，超时作废（设置页里还看得见，但不能授权发布），只能删掉重建。
-- **provenance 不一定真自动**：npm 文档说 trusted publishing 会自动生成 provenance，但实测存在必须显式加 `--provenance` 才发得出去的情况。本工作流的 publish 命令显式带上，发布后再回读 `dist.attestations` 确认。
-- **`Environment name` 留空**：本工作流没有用 GitHub Environments，填了会导致 OIDC 声明的 `sub` 对不上。
-
-Trusted Publishing 要求 npm CLI ≥ 11.5.1、Node ≥ 22.14.0；本仓库 `engines` 为 `^22.19.0 || >=24.0.0`，CI 用 Node 24，均满足。创建 Release 用的是自动注入的 `GITHUB_TOKEN`，工作流已声明 `permissions: contents: write`，无需额外配置。
-
-### 发布失败时
-
-若 `npm publish` 报 `Failed token exchange request` 且 body 是 `404 / package not found`，说明 npm 侧还没有为本仓库登记 trusted publisher（必须由账号本人在网页完成，2FA 挡住了所有 API 途径）。工作流会把该填的三项直接打印到日志里。
-
-登记后补发某个已存在的 tag：
-
-```bash
-gh workflow run release -f tag=v3.3.0
-```
-
-### 为什么发版脚本不直接 `npm publish`
-
-发布凭据只该存在一个地方——CI 由 OIDC 现签发，本地不留任何东西。本机装插件用 `dsh plugin add` 或 `npm pack` 都行，不需要发布权限。
+- **完整流程、trusted publisher 的一次性登记（含三个坑）、发布后验收、失败恢复**：见 [docs/RELEASING.md](docs/RELEASING.md)
+- **改动前必读的规则**（分支、提交规范、检查命令、不许手动 `npm publish`）：见 [AGENTS.md](AGENTS.md)
 
 ## 设计取舍与边界
 

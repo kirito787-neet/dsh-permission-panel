@@ -56,6 +56,8 @@ git push origin master --follow-tags
 5. **回读 npm 核验**：`npm view <包>@<版本> version` 必须查得到、`dist.tarball` 必须存在；provenance 读得到就记 notice，读不到只 warning 不阻断。publish 返回 0 不等于发布成功。
 6. `gh release create <tag> --verify-tag --generate-notes`。已存在则跳过。
 
+**为什么发版脚本不直接 `npm publish`**：发布凭据只该存在一个地方——CI 由 OIDC 现签发，本地不留任何东西。本机装插件用 `dsh plugin add` 或 `npm pack` 都行，不需要发布权限；`tools/release.cjs` 因此只做本地那一半（改版本、跑测试、提交、打 tag），`npm publish` 永远由 CI 执行。
+
 ## 四、npm 侧一次性配置：Trusted Publisher
 
 发布凭据来自 GitHub Actions 的 OIDC：GitHub 每次签发一张短期、绑定「本仓库 + 本工作流」的一次性 token，npm 侧用**事先登记**的 trusted publisher 关系验证它。**这一步只能由账号本人在浏览器里做（带 2FA），CI 和 Agent 都改不了这个设置。**
