@@ -302,6 +302,13 @@ const PRESET_LABELS = {
   wpSelectAllVisible: "Select all {n} visible sessions",
   wpGroupEmptyHidden: "Workspaces with no manageable sessions hidden: {n}",
   wpCurrentRefresh: "Read again",
+  /*
+   * Default-collapsed controls. `wpExpandAll` / `wpCollapseAll` are read off the
+   * fold-all button's face, `wpGroupSelected` off a folded group's header.
+   */
+  wpExpandAll: "Expand all",
+  wpCollapseAll: "Collapse all",
+  wpGroupSelected: "{n} selected",
 };
 const translate = (key) => PRESET_LABELS[key] ?? key;
 
@@ -372,7 +379,12 @@ const renderOnce = (clearFirst) => {
 };
 
 const renderPanel = (openIndex) => {
-  renderOnce(true);
+  /*
+   * Groups default to folded, so the row dropdowns only exist once the list is
+   * unfolded. A real user clicks "Expand all" before picking a session preset;
+   * the harness does the same instead of reaching into component state.
+   */
+  const expandedTree = expandAll(renderOnce(true));
   const target = dropdownOwners.filter((entry) => entry.name === "PresetDropdown")[openIndex];
   if (target === undefined) throw new Error("no PresetDropdown instance at index " + openIndex + " (saw " + dropdownOwners.map((entry) => entry.name).join(",") + ")");
   hookSlots.set(target.owner + "#0", { value: true });
@@ -385,6 +397,22 @@ const renderPanel = (openIndex) => {
   return tree;
 };
 const cleanups = [];
+
+/*
+ * Default-collapsed groups mean every case that wants to SEE rows must unfold
+ * first — exactly what a user does. This helper clicks the toolbar's fold-all
+ * button when it shows "Expand all" and returns the re-rendered tree.
+ *
+ * It is a no-op in flat mode (no workspaces), where nothing folds and the button
+ * does not render at all, so callers need not branch.
+ */
+const expandAll = (tree) => {
+  const button = collect(tree, (entry) => entry.props?.className?.includes?.("dshk-wpFoldAll"))[0];
+  if (button === undefined) return tree;
+  if (!explain(button).includes("Expand all")) return tree;
+  button.props.onClick();
+  return renderOnce(false);
+};
 
 // Dropdown render order after the default card: index 0 = new-session default,
 // index 1 = first session row ("Session A" sorts before "Session B").
@@ -507,7 +535,7 @@ const openDropdown = (index) => {
   commandCalls.length = 0;
   portalCalls.length = 0;
   hookSlots.clear();
-  let gateTree = renderOnce(true);
+  let gateTree = expandAll(renderOnce(true));
   await flush();
   const gateRows = collect(gateTree, (entry) => entry.props?.className === "dshk-wpRow");
   const gateRowA = gateRows.find((row) => explain(row).includes("Session A"));
@@ -581,7 +609,7 @@ const openDropdown = (index) => {
    * rather than the dropdown's "already selected" short circuit.
    */
   hookSlots.clear();
-  let escTree = renderOnce(true);
+  let escTree = expandAll(renderOnce(true));
   await flush();
   escTree = openDropdown(2);
   const escRow = collect(escTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session B"));
@@ -638,7 +666,7 @@ const openDropdown = (index) => {
 
   // ---- case 11: bulk select + one-click apply ----
   hookSlots.clear();
-  let bulkTree = renderOnce(true);
+  let bulkTree = expandAll(renderOnce(true));
   await flush();
   const pickBoxes = () => collect(bulkTree, (entry) => entry.props?.className === "dshk-pick");
   if (pickBoxes().length !== 2) {
@@ -793,7 +821,7 @@ const openDropdown = (index) => {
    */
   hookSlots.clear();
   commandCalls.length = 0;
-  let reflectTree = renderOnce(true);
+  let reflectTree = expandAll(renderOnce(true));
   await flush();
   const rowFor = (tree, title) => collect(tree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes(title));
   let rowB = rowFor(reflectTree, "Session B");
@@ -856,7 +884,7 @@ const openDropdown = (index) => {
     throw refusal;
   };
   try {
-    let refuseTree = renderOnce(true);
+    let refuseTree = expandAll(renderOnce(true));
     await flush();
     refuseTree = openDropdown(1);
     const refuseRow = collect(refuseTree, (entry) => entry.props?.className === "dshk-wpRow").find((row) => explain(row).includes("Session A"));
@@ -1088,7 +1116,7 @@ const openDropdown = (index) => {
    * filtered list that still claims "2" is indistinguishable from a broken filter.
    */
   hookSlots.clear();
-  let searchTree = renderOnce(true);
+  let searchTree = expandAll(renderOnce(true));
   await flush();
   const searchBox = () => collect(searchTree, (entry) => entry.props?.className === "dshk-wpSearch")[0];
   if (searchBox() === undefined) throw new Error("case 18: the session list has no search box");
@@ -1132,7 +1160,7 @@ const openDropdown = (index) => {
    * selecting.
    */
   hookSlots.clear();
-  let allTree = renderOnce(true);
+  let allTree = expandAll(renderOnce(true));
   await flush();
   const selectAllBox = () => collect(allTree, (entry) => entry.props?.className === "dshk-pickAll")[0];
   const searchInput = () => collect(allTree, (entry) => entry.props?.className === "dshk-wpSearch")[0];
@@ -1248,6 +1276,61 @@ const openDropdown = (index) => {
   }
   if (groupTree !== undefined && collect(groupTree, (entry) => entry.props?.className === "dshk-wpGroupTitle" && explain(entry).includes("Gamma")).length !== 0) {
     throw new Error("case 20: a Workspace with no manageable session still rendered a heading");
+  }
+
+  /*
+   * ---- case 21: groups start FOLDED, and the list-wide fold control ----
+   *
+   * The fourth ask on top of grouping: a long list of Workspaces should open
+   * compact. A first render must show the group HEADINGS (the map of what is
+   * there) but no session rows at all — otherwise "default collapsed" is just a
+   * chevron that happens not to be rotated.
+   */
+  hookSlots.clear();
+  let foldTree = renderOnce(true);
+  await flush();
+  const collapsedHeads = collect(foldTree, (entry) => entry.props?.className === "dshk-wpGroupHead");
+  if (collapsedHeads.length !== 2) {
+    throw new Error("case 21: the collapsed list must still show every group heading; saw " + collapsedHeads.length);
+  }
+  if (collect(foldTree, (entry) => entry.props?.className === "dshk-wpRow").length !== 0) {
+    throw new Error("case 21: session rows are expanded by default; groups must start folded");
+  }
+  const foldButton = () => collect(foldTree, (entry) => entry.props?.className?.includes?.("dshk-wpFoldAll"))[0];
+  if (foldButton() === undefined) throw new Error("case 21: the toolbar offers no expand-all control");
+  if (!explain(foldButton()).includes("Expand all")) {
+    throw new Error("case 21: the fold control does not offer to expand a fully collapsed list; saw " + explain(foldButton()));
+  }
+  /* One click must reveal every session — ten Workspaces must not mean ten clicks. */
+  foldButton().props.onClick();
+  foldTree = renderOnce(false);
+  if (collect(foldTree, (entry) => entry.props?.className === "dshk-wpRow").length !== 2) {
+    throw new Error("case 21: expand-all did not reveal every session row");
+  }
+  /*
+   * Ticks placed inside a group must survive folding it, and stay visible on the
+   * header. Folding is a view operation; silently dropping the selection would
+   * make the bulk bar's count unexplainable.
+   */
+  const foldBoxes = collect(foldTree, (entry) => entry.props?.className === "dshk-pick");
+  if (foldBoxes.length !== 2) throw new Error("case 21: the expanded list offers no per-row selection");
+  foldBoxes[0].props.onChange();
+  foldTree = renderOnce(false);
+  if (foldButton() === undefined || !explain(foldButton()).includes("Collapse all")) {
+    throw new Error("case 21: the fold control does not offer to collapse an expanded list; saw " + explain(foldButton()));
+  }
+  foldButton().props.onClick();
+  foldTree = renderOnce(false);
+  if (collect(foldTree, (entry) => entry.props?.className === "dshk-wpRow").length !== 0) {
+    throw new Error("case 21: collapse-all left session rows on screen");
+  }
+  const pickedHeads = collect(foldTree, (entry) => entry.props?.className === "dshk-wpGroupHead" && explain(entry).includes("1 selected"));
+  if (pickedHeads.length !== 1) {
+    throw new Error("case 21: folding a group hid how many of its sessions are selected; saw " + JSON.stringify(collect(foldTree, (entry) => entry.props?.className === "dshk-wpGroupHead").map(explain)));
+  }
+  const foldedBar = collect(foldTree, (entry) => entry.props?.className === "dshk-bulk")[0];
+  if (foldedBar === undefined || !/\b1\b/u.test(explain(foldedBar))) {
+    throw new Error("case 21: folding dropped the selection instead of keeping it; saw " + (foldedBar === undefined ? "no bulk bar" : JSON.stringify(explain(foldedBar))));
   }
 
   console.log(

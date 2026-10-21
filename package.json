@@ -1,7 +1,7 @@
 {
   "name": "dsh-permission-panel",
-  "version": "3.1.0",
-  "description": "DSH 工作区权限面板（Web / Desktop 双载体）：在「设置 → 工作区权限」里统一查看与切换每个会话的权限预设（沙盒模式 + 审批策略），支持批量选择一键修改、自动跳过已归档会话，并可设置新会话的默认权限；另提供一个「重启 DSH」命令（仅 Desktop，Ctrl+Shift+R）。",
+  "version": "3.2.0",
+  "description": "DSH 工作区权限面板（Web / Desktop 双载体）：按工作区分组列出每个会话的权限预设，支持搜索、两级全选与批量修改，自动跳过已归档会话，可设置新会话默认权限，并显示当前会话实际生效的策略；另提供「重启 DSH」命令（仅 Desktop）。",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -57,5 +57,13 @@
     "test": "node test/binding-audit.cjs && node test/dictionaries.cjs && node test/host-api.cjs && node test/legacy-model-search.cjs && node test/smoke.cjs && node test/platform.cjs",
     "verify:profile": "node tools/verify-profile.cjs web",
     "verify:coexistence": "node tools/verify-coexistence.cjs web"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kirito787-neet/dsh-permission-panel.git"
+  },
+  "homepage": "https://github.com/kirito787-neet/dsh-permission-panel#readme",
+  "bugs": {
+    "url": "https://github.com/kirito787-neet/dsh-permission-panel/issues"
   }
 }

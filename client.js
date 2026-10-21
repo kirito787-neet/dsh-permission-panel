@@ -74,9 +74,12 @@ window.__ModuleLoader__.load({
 			wpRefresh: "刷新列表",
 			wpEmpty: "当前没有会话。",
 			wpArchivedSkipped: "已跳过已归档会话：",
-			wpSelectAll: "全选可管理会话",
-			wpSelectAllVisible: "全选当前可见的 {n} 个会话",
+			wpSelectAll: "全选当前展开的会话",
+			wpSelectAllVisible: "全选当前展开的 {n} 个会话",
 			wpSelectGroup: "选中此工作区的全部会话",
+			wpExpandAll: "展开全部",
+			wpCollapseAll: "折叠全部",
+			wpGroupSelected: "已选 {n}",
 			wpSearchPlaceholder: "搜索会话标题、目录或工作区…",
 			wpSearchClear: "清除搜索",
 			wpSearchEmpty: "没有匹配的会话。",
@@ -161,9 +164,12 @@ window.__ModuleLoader__.load({
 			wpRefresh: "Refresh list",
 			wpEmpty: "No sessions right now.",
 			wpArchivedSkipped: "Archived sessions skipped: ",
-			wpSelectAll: "Select every manageable session",
-			wpSelectAllVisible: "Select all {n} visible sessions",
+			wpSelectAll: "Select every expanded session",
+			wpSelectAllVisible: "Select all {n} expanded sessions",
 			wpSelectGroup: "Select every session in this workspace",
+			wpExpandAll: "Expand all",
+			wpCollapseAll: "Collapse all",
+			wpGroupSelected: "{n} selected",
 			wpSearchPlaceholder: "Search session title, folder, or workspace…",
 			wpSearchClear: "Clear search",
 			wpSearchEmpty: "No matching sessions.",
@@ -269,7 +275,9 @@ window.__ModuleLoader__.load({
 		".dshk-wpGroupTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,#e8eaee);min-width:0;max-width:46%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 		".dshk-wpGroupPath{flex:1;min-width:0;font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0aa);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
 		".dshk-wpGroupCount{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0aa);white-space:nowrap}",
+		".dshk-wpGroupPicked{flex:none;font-size:11px;line-height:16px;padding:0 7px;border-radius:8px;background:var(--dsw-alias-interactive-bg-primary,#3b6fe0);color:#fff;white-space:nowrap}",
 		".dshk-wpGroupBody{padding-inline-start:20px}",
+		".dshk-wpFoldAll{flex:none;white-space:nowrap}",
 		/* Current-session policy card. */
 		".dshk-wpChip{flex:none;font-size:12px;line-height:18px;padding:2px 9px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.3));border-radius:9px;color:var(--dsw-alias-label-primary,#e8eaee);white-space:nowrap}",
 		".dshk-currentRow{display:flex;align-items:center;gap:10px;min-width:0}",
@@ -2080,8 +2088,15 @@ window.__ModuleLoader__.load({
 			const [problem, setProblem] = React.useState(null);
 			/** Current text of the session filter box. */
 			const [query, setQuery] = React.useState("");
-			/** Group keys the user collapsed; searching ignores it and forces open. */
-			const [collapsedGroups, setCollapsedGroups] = React.useState(() => new Set());
+			/**
+			 * Group keys the user expanded. EMPTY MEANS EVERYTHING COLLAPSED —
+			 * the reverse of the previous field, because "collapsed by default"
+			 * cannot be expressed by seeding a collapsed-set with keys that are
+			 * only discovered at render time (a workspace that arrives later
+			 * would silently default to open). Absence = collapsed handles both
+			 * the first paint and any workspace the host adds afterwards.
+			 */
+			const [expandedGroups, setExpandedGroups] = React.useState(() => new Set());
 			/** Ids ticked for a bulk change; cleared after a successful run. */
 			const [selected, setSelected] = React.useState(() => new Set());
 			/** Chosen preset in the bulk bar; null until the user picks one. */
@@ -2283,11 +2298,30 @@ window.__ModuleLoader__.load({
 				return hidden;
 			}, [rows, workspaces]);
 
-			/** Selectable visible rows, i.e. the only ones worth offering. */
+			/** Selectable rows in the current filter result, folded or not. */
 			const selectableRows = React.useMemo(
 				() => visibleRows.filter((row) => row.capable === true),
 				[visibleRows],
 			);
+
+			/*
+			 * Selectable rows the user can actually SEE, i.e. inside an open group.
+			 *
+			 * The list-wide select-all governs only these. Folding a group must not
+			 * turn "select all" into a way to tick rows the user just tidied away:
+			 * the group header still offers its own select-all, scoped to that named
+			 * Workspace, but the global control stays honest about what is on screen.
+			 * In flat mode (no Workspaces) nothing folds, so every row counts.
+			 */
+			const openSelectableRows = React.useMemo(() => {
+				if (grouped !== true) return selectableRows;
+				const out = [];
+				for (const group of groups) {
+					if (normalizedQuery === "" && !expandedGroups.has(group.key)) continue;
+					for (const row of group.sessions) if (row.capable === true) out.push(row);
+				}
+				return out;
+			}, [grouped, groups, normalizedQuery, expandedGroups, selectableRows]);
 
 			/*
 			 * Prune the selection against the CURRENT visible row set.
@@ -2309,6 +2343,11 @@ window.__ModuleLoader__.load({
 			 * selection the user could not see. "Select all" must mean "what is on
 			 * screen right now" — an invisible selection is one bulk Apply away from
 			 * changing a session the user thought they had excluded.
+			 *
+			 * FOLDING IS NOT FILTERING. Keyed on `selectableRows`, not on the open
+			 * groups: collapsing a Workspace to tidy the list must not silently
+			 * discard ticks the user placed there on purpose. Those stay visible as
+			 * a count on the group header and remain in the bulk bar.
 			 */
 			const visibleSelectableKey = selectableRows.map((row) => row.id).join("\n");
 			React.useEffect(() => {
@@ -2325,7 +2364,7 @@ window.__ModuleLoader__.load({
 			}, [visibleSelectableKey]);
 
 			const selectedCount = effectiveSelection.size;
-			const allSelected = selectableRows.length > 0 && selectedCount === selectableRows.length;
+			const allSelected = openSelectableRows.length > 0 && openSelectableRows.every((row) => effectiveSelection.has(row.id));
 			const someSelected = selectedCount > 0 && !allSelected;
 
 			/** Toggle one row's membership. */
@@ -2338,14 +2377,25 @@ window.__ModuleLoader__.load({
 				});
 			};
 
-			/** Collapse or expand one Workspace group. */
+			/** Fold or unfold one Workspace group. */
 			const toggleGroup = (key) => {
-				setCollapsedGroups((previous) => {
+				setExpandedGroups((previous) => {
 					const next = new Set(previous);
 					if (next.has(key)) next.delete(key);
 					else next.add(key);
 					return next;
 				});
+			};
+
+			/**
+			 * Unfold every group, or fold them all back.
+			 *
+			 * The companion of default-collapsed: without it, a user with ten
+			 * Workspaces would click ten chevrons to see their sessions once.
+			 * @param open - true to expand every group, false to collapse every group.
+			 */
+			const setAllGroups = (open) => {
+				setExpandedGroups(() => (open ? new Set(groups.map((group) => group.key)) : new Set()));
 			};
 
 			/*
@@ -2589,7 +2639,11 @@ window.__ModuleLoader__.load({
 			 * @param group - one entry from `groupRowsByWorkspace`, already filtered.
 			 */
 			const renderGroup = (group) => {
-				const expanded = normalizedQuery !== "" || !collapsedGroups.has(group.key);
+				/*
+				 * Folded by default; a search forces every hit open, because a
+				 * collapsed group with invisible matches would read as "no results".
+				 */
+				const expanded = normalizedQuery !== "" || expandedGroups.has(group.key);
 				const groupSelectable = group.sessions.filter((row) => row.capable === true);
 				const groupSelected = groupSelectable.filter((row) => effectiveSelection.has(row.id)).length;
 				const groupAll = groupSelectable.length > 0 && groupSelected === groupSelectable.length;
@@ -2607,6 +2661,12 @@ window.__ModuleLoader__.load({
 					React.createElement("span", { key: "title", className: "dshk-wpGroupTitle", title: label }, label),
 					group.path !== "" && group.workspaceId !== void 0 ? React.createElement("span", { key: "path", className: "dshk-wpGroupPath", title: group.path }, group.path) : null,
 					React.createElement("span", { key: "count", className: "dshk-wpGroupCount" }, t("wpGroupCount").replace("{n}", String(group.sessions.length))),
+					/*
+					 * Ticks made inside a group stay on the header when it folds:
+					 * otherwise a folded group is a black box that still feeds the
+					 * bulk bar, and the user cannot tell why the count says 3.
+					 */
+					groupSelected > 0 ? React.createElement("span", { key: "picked", className: "dshk-wpGroupPicked" }, t("wpGroupSelected").replace("{n}", String(groupSelected))) : null,
 					/*
 					 * Group-level select-all. Offered only when the group has something
 					 * actionable; the browser's own tri-state look comes from the ref,
@@ -2717,11 +2777,12 @@ window.__ModuleLoader__.load({
 						}, t("wpRefresh")),
 					]),
 					/*
-					 * Search and select-all share one toolbar so the two controls the list
-					 * needs most are found in the same place. Select-all is a LABELED
-					 * checkbox, not a bare 15px box: the old one was there all along and
-					 * still read as missing. It governs what is currently visible, which
-					 * under an active filter is exactly what the user sees.
+					 * Search, expand-all and select-all share one toolbar so the controls
+					 * the list needs most are found in the same place. Select-all is a
+					 * LABELED checkbox, not a bare 15px box: the old one was there all
+					 * along and still read as missing. It governs what is currently
+					 * visible INSIDE AN OPEN GROUP, which is what the user can actually
+					 * see once groups default to folded.
 					 */
 					rows.length === 0 ? null : React.createElement("div", { className: "dshk-wpTools", key: "tools" }, [
 						React.createElement("input", {
@@ -2739,7 +2800,19 @@ window.__ModuleLoader__.load({
 							className: "dshk-btn",
 							onClick: () => setQuery(""),
 						}, t("wpSearchClear")),
-						selectableRows.length === 0 ? null : React.createElement("label", { key: "all", className: "dshk-pickAllBox", title: normalizedQuery === "" ? t("wpSelectAll") : t("wpSelectAllVisible").replace("{n}", String(selectableRows.length)) }, [
+						/*
+						 * Fold-all is the companion of default-collapsed: without it a user
+						 * with ten Workspaces clicks ten chevrons to see anything at once.
+						 * The label follows what the click will do, which is also the only
+						 * honest way to render a single toggle.
+						 */
+						grouped ? React.createElement("button", {
+							key: "foldAll",
+							type: "button",
+							className: "dshk-btn dshk-wpFoldAll",
+							onClick: () => setAllGroups(!groups.every((group) => normalizedQuery !== "" || expandedGroups.has(group.key))),
+						}, groups.every((group) => normalizedQuery !== "" || expandedGroups.has(group.key)) ? t("wpCollapseAll") : t("wpExpandAll")) : null,
+						openSelectableRows.length === 0 ? null : React.createElement("label", { key: "all", className: "dshk-pickAllBox", title: normalizedQuery === "" ? t("wpSelectAll") : t("wpSelectAllVisible").replace("{n}", String(openSelectableRows.length)) }, [
 							React.createElement("input", {
 								key: "box",
 								type: "checkbox",
@@ -2748,7 +2821,7 @@ window.__ModuleLoader__.load({
 								ref: markIndeterminate(someSelected),
 								"aria-label": t("wpSelectAll"),
 								"aria-checked": someSelected ? "mixed" : allSelected,
-								onChange: () => toggleSelection(selectableRows),
+								onChange: () => toggleSelection(openSelectableRows),
 							}),
 							React.createElement("span", { key: "label" }, t("wpSelectAllLabel")),
 						]),
