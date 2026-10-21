@@ -132,8 +132,43 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 - `verify-profile.cjs` 用真实 `dsh --profile <name> --dump-config` 组合出完整 loader 树（不启动应用），断言包确实被 profile 挂载、`exports["./client"]` 可解析。
 - `probe-inject.cjs` 把网关的注册方式如实复刻：它打印 10 个场景的实测结果，其中「父层只声明 `remote.settings`、嵌套作用域读 `remote.permissionPresets`」一例会抛 `cannot get property "remote.permissionPresets" without inject`——这正是面板早期「半个功能坏掉」的成因。
 - `mutate.cjs` 按字面量替换生成变异副本（不做替换就报错退出），用来验证某条断言真的能抓到它声称防住的缺陷。
+- `release.cjs` 见下节。
 
 工具通过 `tools/dsh-install.cjs` 定位 DSH 安装目录：默认取各平台的标准安装路径，可用环境变量 `DSH_INSTALL_DIR` 覆盖。注意 DSH 自己也用 `DSH_HOME` 这个名字，但指的是用户 profile 目录，不是安装目录。
+
+## 发布
+
+发版以 **git tag 为准**，不从分支自动发：tag 是不可变的快照，事后能回答「npm 上那个 3.2.0 到底是哪份代码」。落在分支上的自动发布会让每个普通提交都变成一个版本号。
+
+```bash
+# 1) 本地：改版本号 + 跑全套测试 + 提交 + 打 tag
+npm run release patch        # 3.2.0 -> 3.2.1；也接受 minor / major / 3.4.1
+#    工作树必须干净、当前必须在 master、且不能落后 origin/master，
+#    否则脚本会在改动任何文件之前停下。
+
+# 2) 推送，触发 CI
+git push origin master --follow-tags
+```
+
+推上去之后 `.github/workflows/release.yml` 会：
+
+1. 再跑一遍 `npm test`（tag 指向的代码必须自己是绿的）；
+2. 校验 tag 与 `package.json` 的 `version` 是同一个数字——对不上就失败，因为 npm 不允许覆盖已发布版本；
+3. `npm publish --access public --provenance`；
+4. `gh release create <tag> --generate-notes`。
+
+任一步失败，后面的步骤不会执行，所以不会出现「npm 有了但 GitHub 没有」这种半截状态。
+
+### 首次发布需要两个凭据
+
+- **npm 令牌**：在 [npmjs.com](https://www.npmjs.com/settings/tokens) 建一个 **Automation** 类型的 token，存成仓库 secret `NPM_TOKEN`（`gh secret set NPM_TOKEN`）。没有它时工作流只建 GitHub Release 并打印一条 warning，不会失败——这样首次发布前也能先把 Release 建起来。
+- **仓库写权限**：工作流已声明 `permissions: contents: write`，用的是自动注入的 `GITHUB_TOKEN`，不需要额外配置。
+
+手动补发某个已存在的 tag：`gh workflow run release -f tag=v3.2.0`。
+
+### 为什么发版脚本不直接 `npm publish`
+
+发布凭据只该存在两个地方——CI 的 secret，或者你本人的登录态。把 token 摊在本地脚本参数里，它就会进 shell 历史、日志和任何一次录屏。
 
 ## 设计取舍与边界
 

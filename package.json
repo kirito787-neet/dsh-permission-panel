@@ -56,7 +56,13 @@
   "scripts": {
     "test": "node test/binding-audit.cjs && node test/dictionaries.cjs && node test/host-api.cjs && node test/legacy-model-search.cjs && node test/smoke.cjs && node test/platform.cjs",
     "verify:profile": "node tools/verify-profile.cjs web",
-    "verify:coexistence": "node tools/verify-coexistence.cjs web"
+    "verify:coexistence": "node tools/verify-coexistence.cjs web",
+    "release": "node tools/release.cjs",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "repository": {
     "type": "git",

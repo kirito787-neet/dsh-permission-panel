@@ -1,0 +1,99 @@
+name: release
+
+# 发版流程：推一个 v* tag → 跑测试 → 发布到 npm → 建 GitHub Release。
+#
+# 为什么以 tag 为准而不是以分支为准：tag 是不可变的发布快照，能在事后回答
+# 「npm 上那个 3.2.0 到底是哪份代码」。落在分支上的自动发布会把每个普通提交
+# 都变成一个版本号，版本号随即失去意义。
+
+on:
+  push:
+    tags:
+      - "v*"
+  # 手动补发：给一个已存在的 tag，走同一条路径，便于首次发布或补建 Release。
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的已有 tag（例如 v3.2.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: write # 创建 GitHub Release
+  id-token: write # npm provenance（OIDC 签名）
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    name: 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # 测试是纯 Node 自带的，不需要 npm install。
+      - name: npm test
+        run: npm test
+
+  publish:
+    name: 发布
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # tag 与 package.json 必须说同一个版本号，否则会发出一个「名字和内容不符」的包，
+      # 而 npm 不允许覆盖已发布版本，错了只能改名重发。
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          node -e '
+            const version = require("./package.json").version;
+            const tag = process.env.TAG.replace(/^v/, "");
+            if (version !== tag) {
+              console.error("tag " + process.env.TAG + " does not match package.json version " + version);
+              process.exit(1);
+            }
+            console.log("version ok: " + version);
+          '
+
+      - name: 发布到 npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::warning::仓库没有配置 NPM_TOKEN，跳过 npm 发布（只建 GitHub Release）。"
+            echo "在 Settings → Secrets and variables → Actions 添加 NPM_TOKEN 后，重跑本工作流即可补发。"
+            exit 0
+          fi
+          npm publish --access public --provenance
+
+      # Release 先建：即使 npm 那一步因为缺少密钥被跳过，用户也应该在 GitHub 上看到这一版。
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          fi
