@@ -134,9 +134,15 @@ if (existing.status === 0) {
 // ---- 改版本、跑测试、提交、打 tag -------------------------------------------
 
 console.log(`\n发版 ${current} -> ${version}\n`);
-manifest.version = version;
-// 保留原有的缩进：package.json 是手写文件，重排整个文件会让 diff 变成噪音。
-writeFileSync(packagePath, JSON.stringify(manifest, void 0, 2) + "\n");
+if (dryRun) {
+	// --dry-run 必须一个字节都不落地：否则「预演」会留下一个改过的版本号，
+	// 下一次真发版就会从这个假版本继续往上加。
+	console.log("[dry-run] 不修改 package.json（保持 " + current + "）");
+} else {
+	manifest.version = version;
+	// 保留原有的缩进：package.json 是手写文件，重排整个文件会让 diff 变成噪音。
+	writeFileSync(packagePath, JSON.stringify(manifest, void 0, 2) + "\n");
+}
 
 // 版本号先改再测：测试里若有断言版本号的用例，应该先看到真实的失败。
 run("npm", ["test"]);
@@ -144,6 +150,13 @@ run("npm", ["test"]);
 run("git", gitArgs(["add", "package.json"]), { mutates: true });
 run("git", gitArgs(["commit", "-m", `chore(release): ${tag}`]), { mutates: true });
 run("git", gitArgs(["tag", "-a", tag, "-m", tag]), { mutates: true });
+
+if (dryRun) {
+	console.log(`
+[dry-run] 到此为止：版本号未改、测试已跑、未提交、未打 tag。
+`);
+	process.exit(0);
+}
 
 console.log(`
 版本号已改好，测试已通过，tag ${tag} 已在本地创建。
