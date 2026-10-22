@@ -3,7 +3,7 @@
 ## 测试
 
 ```bash
-npm test   # 无外部依赖，纯 Node 内置模块，8 个 test/*.cjs 串行跑
+npm test   # 无外部依赖，纯 Node 内置模块，9 个 test/*.cjs 串行跑
 ```
 
 | 测试 | 守着什么 |
@@ -13,9 +13,10 @@ npm test   # 无外部依赖，纯 Node 内置模块，8 个 test/*.cjs 串行�
 | `test/host-api.cjs` | 宿主 API 兼容。剥掉注释后只查活跃代码：不出现已移除的面、每个 `remote.<ns>` 都在 `inject` 声明过、`workspaces` / `shortcuts` / `sessions` **不在**硬门控数组里、`commands.execute` 首参是裸 Session id |
 | `test/legacy-model-search.cjs` | 迁移兼容。真实加载 `client.js`、渲染设置页、按行调用 `onChange`，断言偏好文档里的 `modelSearch` 字段在每次整份重写后都完好保留 |
 | `test/smoke.cjs` | 面板渲染与交互。夹具覆盖正常/归档工作区；断言行内下拉、按会话 id 下发 `/permission`、默认权限写入携带 revision、批量只作用于勾选行、归档会话不出现且跳过数被报告，以及折叠、分组、搜索、当前会话卡片 |
-| `test/platform.cjs` | 双载体回归。以「有 preload 桥」「只有 URL 标记」「两者都没有」三种页面加载真实 `client.js`，断言不装全局 `keydown`、Desktop-only 命令在 Web 下 `resolve` 返回 `blocked`，并在完全没有 `workspaces` 时仍能激活 |
+| `test/platform.cjs` | 双载体回归。以「无 `dataset.platform` 印章」（浏览器）与「有印章」（Desktop）两种页面加载真实 `client.js`，断言不装全局 `keydown`、Desktop-only 命令在 Web 下 `resolve` 返回 `blocked`、在 Desktop 下 `handled` 且只 POST 一次 `/api/permission-panel/restart`，并在完全没有 `workspaces` 时仍能激活 |
 | `test/locate.cjs` | 定位按钮。断言按钮只在有当前会话时出现、只展开所属分组、`scrollIntoView({block:"center",behavior:"smooth"})` 恰好指向该行；搜索/筛选遮住该行时先清掉再定位；确实不在列表时才出提示 |
 | `test/filter.cjs` | 权限等级筛选。断言 chip 由实际等级推导、命中数正确、选「完全权限」只剩该等级行、搜索与筛选叠加为空时显示筛选空态 |
+| `test/restart-route.cjs` | 宿主半边重启路由。断言 `inject` 只有 `webServer`、注册路径与 `client.js` 的 `RESTART_PATH` 一致、GET→405、非 loopback 与任何 forwarded 头→403、`sec-fetch-site: cross-site`→403、无 cookie→403、同源与 Desktop 转发形状→202 且只在这时 `process.exit(0)` 并先发一条 `{type:"fatal"}` IPC（被拒的请求与 `dsh web` 宿主都不得发）、`dsh web` 宿主→409 且不退进程、`getOrigin()` 在监听前抛错时激活不崩且该形状被拒；最后一段把真实 handler 挂到真实 `http` server 上用 Node 自己的 `fetch` 按 shell 的方式转发（删 `host`/`origin`/`cookie`/`sec-fetch-site`、注入 cookie），因为只有这样才会暴露 undici 会把 `host` 从目标 URL 补回来这一事实——按「两个头都缺失」写的旧判据会让每一次真实重启静默 403。同时否定 `dshDesktopActions` / `dsh-desktop-mode` / `/api/desktop/restart` 这些不存在的旧信号 |
 
 测试里的关键断言都做过**变异回退验证**：把实现改坏，用例必须真的失败。没被变异测试验证过的断言，就只是一句注释。
 
@@ -40,7 +41,11 @@ node tools/mutate.cjs client.js .mut.js '<原文>' '<替换文本>'   # 变异�
 - **「实际生效」只能来自宿主**：面板切换成功后写回的行值只是面板自己的记录，不能证明宿主在按什么策略执行，所以当前会话卡片走强制冷读，并在切换后再读一次。
 - **读投影不等于开会话**：`retain()` 会实体化 scope 并打开历史。列表型功能必须用 `projections` 冷读，否则「看一眼所有会话的权限」会变成「把所有会话都打开一遍」。
 - **按 id 下发命令，不要先拿 binding**：`sessions.binding(id)` 只返回已存在的 scope、从不创建；`remote.commands.execute(sessionId, …)` 走宿主按需恢复，未打开的会话是合法目标。
-- **载体识别每次调用即时探测**，不在激活时缓存一次：插件可能被热重载进一个稍后才装上 preload 桥的页面，缓存住一次否定会让宿主本可提供的命令永久失效。
+- **载体识别每次调用即时探测**，不在激活时缓存一次：Desktop 的 preload 在 `document.documentElement` 还不存在时会把 `dataset.platform` 印章推迟到 `DOMContentLoaded`，插件可能被热重载进一个印章还没落下的页面，缓存住一次否定会让宿主本可提供的命令永久失效。
+- **载体信号只认 `document.documentElement.dataset.platform`**：这是 shell 无条件写给每个它拥有的页面的唯一标记。不要改用「preload 桥」或「URL 标记」——本插件曾假设存在一个 `dshDesktopActions` 桥与一个 `dsh-desktop-mode` 查询参数，实测 182MB 的 `app.asar` 里两者各有 0 命中，结果是快捷键在真实 Desktop 上永远走 `blocked` 分支、无声失效。
+- **重启只能「让宿主退出，交给官方恢复对话框」**：Electron 主进程 `spawn` 了这个宿主子进程，`child.on("close")` 无论退出码是 0 还是非 0 都会走 `fail()` → `reportFatal()` → 恢复对话框（默认按钮就是「重启」，`response !== 0` 时执行 `app.relaunch(); quitWithoutConfirmation()`）。`app.relaunch()` 在生产代码里只有这一处入口，preload 没有重启通道、IPC 没有重启消息、`webServer` 没有重启服务。所以正确的重启就是「回应 202 然后 `process.exit(0)`」——和官方「禁用第三方插件并重启」以及社区插件管理器的 `shell` 模式完全同构。自己起一个 detached helper 重新跑 argv 在 Desktop 下是错的：那个 argv 是 Electron 给的宿主入口，自起一份会抢端口并变成游离的第二个宿主，而 Electron 仍会弹恢复对话框。
+- **`dsh web` 下这条路由必须拒绝（409）而不是退出**：没有 shell 会把进程拉回来，退出等于把服务关掉再也起不来。
+- **退出前先发一条 `fatal` IPC，纯粹是为了对话框可读**：宿主只说退出时，shell 的 detail 是 `dsh desktop host stopped` 拼上**本进程 stderr 的尾巴**——那多半是某个无关插件最后打的一行日志（本机实测是几十条 `[qq-tool-restrict] skip restrict …` 与一段 inspector 堆栈），看起来像本插件崩了。`DesktopHostProcess.fail()` 用 `failureReported` 幂等，先到的 `fatal` 生效，于是主动报一句人话即可，对话框与 `app.relaunch()` 全不变。不要去改别人插件的日志：那既不在本仓库，也不是本插件的问题。
 - **Desktop 专有命令在 Web 下是「不声明默认键位 + `resolve` 拒绝」**，而不是渲染成灰色行：置灰会暗示别的含义，而这里缺的是宿主能力，不是用户权限。
 - **迁移待办会话（`migration-required`）**：宿主此时可能只给缓存里的部分投影键，也许没有 `permissions`。面板把这类行保留为不可用（fail-open），不会因为读不到就把会话从列表里藏掉。
 - **探测失败不静默**：面板侧的服务探测失败会打 `console.error` 并写入全局诊断槽，把「面板莫名空白」变成一行可读答案。

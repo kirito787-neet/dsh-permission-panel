@@ -32,12 +32,12 @@ window.__ModuleLoader__.load({
 		 * written, so the document migrates forward on first change.
 		 */
 		const LEGACY_STORAGE_KEY = "dsh.hotkeyToolkit.v1";
-		/** Electron preload bridge exposing argument-free Desktop actions. */
-		const ACTIONS_BRIDGE = "dshDesktopActions";
-		/** Loopback fallback, used when the renderer runs without the preload bridge. */
-		const RESTART_PATH = "/api/desktop/restart";
-		/** URL marker the Electron main process appends when it owns the window. */
-		const MODE_MARKER = "dsh-desktop-mode";
+		/**
+		 * Host route that asks the Desktop shell to bring DSH down for a relaunch.
+		 * Registered by this package's own node half (index.js) on the host
+		 * `webServer`; the app page reaches it with a relative fetch.
+		 */
+		const RESTART_PATH = "/api/permission-panel/restart";
 
 		const zh = {
 			nav: "权限面板",
@@ -51,11 +51,11 @@ window.__ModuleLoader__.load({
 			switchSection: "快捷键开关",
 			switchSectionHint: "逐个启用或停用本插件提供的快捷键。停用后命令仍保留在官方快捷键列表中，键位与冲突检测都不变，只是按下时不执行（也不会拦截该按键）。",
 			switch_restart: "重启 DSH",
-			switchHint_restart: "重新启动 DSH Desktop 应用。",
+			switchHint_restart: "关闭 DSH，随后在弹出的官方对话框中点「重启」完成重启。",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
 			cmdRestart: "重启 DSH（权限面板）",
 			cmdAliasRestart: "重启 DSH 重新启动",
-			restarting: "DSH 正在重启…",
+			restarting: "DSH 正在关闭…随后会弹出官方的「应用无法启动或已意外停止」对话框，请在对话框中点「重启」。",
 			actionFailed: "操作失败：",
 			noShortcut: "快捷键未绑定或不可用。",
 			subpluginSection: "子插件",
@@ -148,11 +148,11 @@ window.__ModuleLoader__.load({
 			switchSection: "Shortcut switches",
 			switchSectionHint: "Enable or disable each shortcut this plugin contributes. A disabled command stays in the official shortcut list with its keys and conflict checks intact — it simply does not run when pressed (and does not swallow the key).",
 			switch_restart: "Restart DSH",
-			switchHint_restart: "Relaunches the DSH Desktop application.",
+			switchHint_restart: "Closes DSH; then click Restart in the official dialog that appears.",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
 			cmdRestart: "Restart DSH (Permission Panel)",
 			cmdAliasRestart: "restart DSH relaunch",
-			restarting: "DSH is restarting…",
+			restarting: "DSH is shutting down… the official \"The application could not start or stopped unexpectedly\" dialog will appear — click Restart there.",
 			actionFailed: "Operation failed: ",
 			noShortcut: "The shortcut is unbound or unavailable.",
 			subpluginSection: "Sub-plugins",
@@ -586,37 +586,36 @@ window.__ModuleLoader__.load({
 		/**
 		 * Whether this page is carried by the DSH Desktop shell.
 		 *
-		 * The renderer is byte-identical on both carriers, so the shell has to be
-		 * detected from what only it contributes: the context-isolated
-		 * `dshDesktopActions` preload bridge, or the `dsh-desktop-mode` marker the
-		 * Electron main process appends to the window URL. A plain browser (the
-		 * `dsh web` carrier, or a remote browser session) has neither, and the
-		 * Desktop-only rows must not be offered there — restarting "DSH" and
-		 * switching a window mode are meaningless without the shell that owns them.
+		 * The Desktop preload stamps `document.documentElement.dataset.platform`
+		 * with `process.platform` (`darwin` / `win32` / `linux`) unconditionally, on
+		 * every page it owns, before any plugin bundle runs. That stamp is the only
+		 * signal the renderer can rely on: the shell exposes no restart bridge, and
+		 * the window URL carries no mode marker. A plain browser (the `dsh web`
+		 * carrier, or a remote browser session) has no stamp, and the Desktop-only
+		 * rows must not be offered there — there is no application to relaunch.
 		 *
-		 * Probed on every call rather than cached: the preload bridge is installed
-		 * before any bundle runs, but a plugin may be reloaded into a page whose
-		 * bridge arrives with a later generation, and a stale negative would
-		 * permanently hide rows the shell can serve.
+		 * Probed on every call rather than cached: the stamp lands on
+		 * `DOMContentLoaded` when the document element does not exist yet, and a
+		 * stale negative would permanently hide rows the shell can serve.
 		 */
 		function hasDesktopHost() {
-			if (typeof window === "undefined") return false;
+			if (typeof window === "undefined" || typeof document === "undefined") return false;
 			try {
-				const bridge = window[ACTIONS_BRIDGE];
-				if (bridge !== void 0 && bridge !== null && typeof bridge.invoke === "function") return true;
-				return new URLSearchParams(window.location.search).get(MODE_MARKER) !== null;
+				const platform = document.documentElement?.dataset?.platform;
+				return typeof platform === "string" && platform.length > 0;
 			} catch {
 				return false;
 			}
 		}
 
-		/** Invoke one argument-free Desktop action, preferring the preload bridge. */
-		async function desktopAction(action) {
-			const bridge = typeof window !== "undefined" ? window[ACTIONS_BRIDGE] : void 0;
-			if (bridge !== void 0 && bridge !== null && typeof bridge.invoke === "function") {
-				await bridge.invoke(action);
-				return;
-			}
+		/**
+		 * Ask the host to shut DSH down so the Desktop shell can relaunch it.
+		 *
+		 * The shell treats a host exit as a crash and shows its recovery dialog
+		 * whose default button (重启) performs the actual `app.relaunch()`; there is
+		 * no channel to relaunch directly, so this is the whole of the mechanism.
+		 */
+		async function desktopAction() {
 			const response = await fetch(RESTART_PATH, {
 				method: "POST",
 				credentials: "same-origin",
@@ -674,17 +673,18 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Relaunch DSH Desktop through the Desktop-owned restart action.
+		 * Restart DSH by asking the host to exit; the Desktop shell then offers its
+		 * recovery dialog whose default button is 重启.
 		 *
-		 * Desktop-only by nature: a browser carrier has no application to relaunch,
-		 * and the row that binds this shortcut is hidden there. The guard keeps a
-		 * stale binding (or a programmatic call) from firing a request at an
-		 * endpoint the carrier does not serve.
+		 * Desktop-only by nature: a browser carrier has no shell to relaunch the
+		 * server, and the row that binds this shortcut is hidden there. The guard
+		 * keeps a stale binding (or a programmatic call) from firing a request at an
+		 * endpoint whose carrier cannot complete it.
 		 */
 		async function restartApplication() {
 			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
 			notify(text("restarting"));
-			await desktopAction("restart");
+			await desktopAction();
 		}
 
 		/** Preset machine value that must pass an explicit risk gate before switching. */

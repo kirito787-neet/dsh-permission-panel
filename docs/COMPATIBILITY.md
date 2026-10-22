@@ -24,6 +24,22 @@ dsh plugin --profile <profile> add "file:<绝对路径>/dsh-permission-panel-<ve
 - `peerDependencies`（`react` / `react-dom`）是可选提示；profile 默认 `autoInstallPeers: false`，宿主已自带 React 18，不会多装一份。
 - `engines.node` 跟随 DSH Desktop 的要求（`^22.19.0 || >=24.0.0`），未启用 `engine-strict`，只作提示。
 
+## 宿主半边（`index.js`）
+
+面板全部在浏览器半边（`client.js`），但「重启 DSH」需要宿主侧承接一步：`index.js` 顶层声明 `inject = ["webServer"]`（硬依赖，官方服务，无新增 npm 依赖），并在 `apply(ctx)` 里注册一条精确路由：
+
+| 项 | 值 |
+| --- | --- |
+| 方法 / 路径 | `POST /api/permission-panel/restart` |
+| 来源校验 | 对端必须是 loopback；拒绝 `forwarded` / `x-forwarded-for` / `x-real-ip`；`sec-fetch-site: cross-site` 拒绝；**两种形状都要求带非空 cookie**。`origin` 缺失时视为 Desktop 代理转发形状，另要求 `host` 等于本服务自己的 `getOrigin()` authority（`#648` 会剥掉 `origin`，转发用的 Node `fetch` 会由 undici 从目标 URL 把 `host` 补回来；cookie 则是 `forwardWebRequest` 无条件注入的）；`origin` 存在时要求 `host` 与它同源。cookie 不是认证（本机进程可以伪造任何头），但这条路由注册为 `exact`，`match()` 先查 exact 表、不走 `/api` 前缀的统一认证栅栏，要求 cookie 至少让裸 `curl -X POST` 或只设 `Origin` 的探测打不下来；能执行本地代码的进程本就能直接杀进程，这是所有 loopback-only 护栏的共同上限 |
+| 成功响应 | `202 {ok:true, restarting:true}`，随即先发一条宿主 IPC `{type:"fatal", message: <权限面板的说明>}`，再 `setTimeout(() => process.exit(0), 250)` |
+| 非 Desktop 宿主 | `409`，且**不**退出进程、不发 `fatal`（`dsh web` 下没有 shell 能把服务拉回来） |
+| 其它 | 非 POST → `405`（带 `allow: POST`）；未通过来源校验 → `403` |
+
+那条 `fatal` 是为了对话框的 detail 可读：宿主只是退出时，shell 把 `dsh desktop host stopped` 与**本进程 stderr 的尾巴**拼成 detail，而 stderr 尾巴常常是别的插件最后打的一条日志（例如某插件每次启动都刷的一串告警），看上去像本插件崩了。`DesktopHostProcess.fail()` 有 `failureReported` 幂等锁，先到的 `fatal` 生效，所以主动报一句人话即可——对话框本身、默认「重启」按钮、崩溃报告与 `app.relaunch()` 全不变；`process.send` 不存在时静默跳过，重启照常。
+
+为什么是「退出宿主」而不是「调用某个重启 API」：DSH Desktop 的 Electron 主进程 `spawn` 了这个宿主子进程，`child.on("close")` 无论退出码 0 还是非 0 都会进 `fail()` → `reportFatal()` → 官方恢复对话框，其默认按钮「重启」执行 `app.relaunch(); quitWithoutConfirmation()`。生产代码里 `app.relaunch()` 只有这一个入口——preload 无重启通道、IPC 无重启消息、`webServer` 无重启服务（`app.asar` 全盘字节扫描 `dshDesktopActions` / `dsh-desktop-mode` / `desktop/restart` 均 0 命中）。所以这条路由与官方「禁用第三方插件并重启」以及社区插件管理器的 `shell` 模式同构。浏览器半边据此判断载体：只认 `document.documentElement.dataset.platform`（Desktop preload 无条件写入），不存在所谓 preload 重启桥或 URL 标记。
+
 ## DSH 0.2.x 兼容面
 
 0.2.1 移除了本插件早期依赖的若干客户端面（`sessions.list` / `workspaces.list` 两个客户端快照、`configForms` / `settingsSchema` 两个设置服务）。当前实现只使用真实存在的面：

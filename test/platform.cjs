@@ -4,18 +4,19 @@
  *
  * Two things are carrier-dependent now.
  *
- * 1. **The Desktop-only commands.** Restart DSH and the three window-mode
- *    switches are contributed to the OFFICIAL shortcut service with Desktop
- *    profiles only, and their `resolve` refuses on a browser carrier. The plugin
- *    no longer runs its own `keydown` listener, so "does the key do anything" is
- *    no longer a question about a listener — it is a question about what the
- *    registered command resolves to, and about which profiles carry a default.
- * 2. **The `dsh-desktop` settings scope.** It is Desktop-owned; binding it on a
- *    browser carrier would subscribe to a namespace that has no settings row.
+ * 1. **The Desktop-only command.** Restart DSH is contributed to the OFFICIAL
+ *    shortcut service with Desktop profiles only, and its `resolve` refuses on a
+ *    browser carrier. The plugin no longer runs its own `keydown` listener, so
+ *    "does the key do anything" is no longer a question about a listener — it is
+ *    a question about what the registered command resolves to, and about which
+ *    profiles carry a default.
+ * 2. **The carrier stamp.** DSH Desktop's preload writes
+ *    `document.documentElement.dataset.platform` (`darwin`/`win32`/`linux`) on
+ *    every page it owns. That stamp is the ONLY reliable signal: there is no
+ *    restart preload bridge and no URL mode marker in the shipped shell.
  *
- * The suite renders the real client.js through a stubbed module loader, once with
- * the Desktop bridge installed, once with only the URL marker, and once with
- * neither, and asserts what each carrier contributes.
+ * The suite renders the real client.js through a stubbed module loader: once as
+ * a plain browser (no platform stamp) and once as the Desktop shell (stamped).
  *
  * Usage: node test/platform.cjs [path/to/client.js]
  */
@@ -29,16 +30,24 @@ const loaded = [];
 const registeredDictionaries = new Map();
 let captured = null;
 
-// ---- document stub ----
-const fakeBody = { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false };
-global.document = {
-  body: fakeBody,
-  head: { appendChild() {} },
-  createElement: () => ({ style: {}, dataset: {}, setAttribute() {}, remove() {}, appendChild() {} }),
-  getElementById: () => null,
-  addEventListener() {},
-  removeEventListener() {},
-  querySelector: () => null,
+/**
+ * Build a document stub for one carrier.
+ * @param platform - value for `documentElement.dataset.platform`; `undefined`
+ *   models a plain browser (the stamp is absent entirely).
+ */
+const makeDocument = (platform) => {
+  const documentElement = { dataset: platform === undefined ? {} : { platform } };
+  const fakeBody = { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false };
+  return {
+    body: fakeBody,
+    head: { appendChild() {} },
+    documentElement,
+    createElement: () => ({ style: {}, dataset: {}, setAttribute() {}, remove() {}, appendChild() {} }),
+    getElementById: () => null,
+    addEventListener() {},
+    removeEventListener() {},
+    querySelector: () => null,
+  };
 };
 
 // ---- react stub (element trees the harness renders itself) ----
@@ -77,18 +86,22 @@ const requireStub = (id) => {
 const runEffect = (body) => { const dispose = body(); return typeof dispose === "function" ? dispose : () => {}; };
 
 /**
+ * The route the browser half must POST to. Pinned here so a rename in either
+ * half (client.js or index.js) fails this test instead of silently 404ing.
+ */
+const RESTART_ROUTE = "/api/permission-panel/restart";
+
+/**
  * Load the plugin against one carrier.
  *
- * `bridge` installs the context-isolated Desktop preload bridge; `search` is the
- * window URL query, which carries the Electron-owned mode marker. `omit` names
- * services to WITHHOLD, which is how the suite proves a soft dependency really
- * is soft: the plugin must still activate and still register its sections.
+ * `platform` installs the Desktop preload's document stamp (`"win32"`, ...);
+ * omit it for a plain browser. `omit` names services to WITHHOLD, which is how
+ * the suite proves a soft dependency really is soft: the plugin must still
+ * activate and still register its sections.
  */
-function loadPlugin({ bridge, search, omit = [] }) {
+function loadPlugin({ platform, omit = [] }) {
   const reloads = [];
   const fetches = [];
-  /** Every argument the preload bridge was invoked with. */
-  const bridgeCalls = [];
   const commands = new Map();
   const registrations = new Map();
   /** Every `remote.settings.describe()` call: proof the settings binding fired. */
@@ -101,7 +114,7 @@ function loadPlugin({ bridge, search, omit = [] }) {
     __ModuleLoader__: { load: (definition) => { captured = definition; } },
     localStorage: { getItem: () => null, setItem() {} },
     location: {
-      search,
+      search: "",
       reload: () => { reloads.push(Date.now()); },
     },
     addEventListener(type, listener, capture) { if (type === "keydown" && capture === true) windowKeydown.push(listener); },
@@ -109,15 +122,17 @@ function loadPlugin({ bridge, search, omit = [] }) {
       if (type === "keydown") { const at = windowKeydown.indexOf(listener); if (at >= 0) windowKeydown.splice(at, 1); }
     },
   };
-  if (bridge) fakeWindow.dshDesktopActions = { invoke: async (action) => { bridgeCalls.push(action); } };
+  const fakeDocument = makeDocument(platform);
 
   const previousWindow = global.window;
+  const previousDocument = global.document;
   global.window = fakeWindow;
-  global.fetch = async (url, options) => { fetches.push({ url, options }); return { ok: true, status: 200 }; };
+  global.document = fakeDocument;
+  global.fetch = async (url, options) => { fetches.push({ url, options }); return { ok: true, status: 202 }; };
 
-  // Re-load the module against this window so the plugin closes over it.
+  // Re-load the module against this window/document so the plugin closes over them.
   captured = null;
-  new Function("require", "window", "document", source)(requireStub, fakeWindow, global.document);
+  new Function("require", "window", "document", source)(requireStub, fakeWindow, fakeDocument);
   if (captured === null) throw new Error("client.js never called __ModuleLoader__.load");
 
   /*
@@ -140,7 +155,7 @@ function loadPlugin({ bridge, search, omit = [] }) {
   const shortcutsService = {
     register: (command) => { commands.set(command.id, command); return () => { commands.delete(command.id); }; },
   };
-  /** Mode writes performed through `remote.settings.update` on the Desktop carrier. */
+  /** Mode writes performed through `remote.settings.update`. */
   const modeWrites = [];
   const scopeFor = (names) => {
     const scope = { effect: runEffect };
@@ -206,7 +221,8 @@ function loadPlugin({ bridge, search, omit = [] }) {
   plugin.apply(ctx);
 
   global.window = previousWindow;
-  const carrier = { bridge, search, windowKeydown, reloads, fetches, bridgeCalls, modeWrites, registrations, commands, settingsReads };
+  global.document = previousDocument;
+  const carrier = { platform, windowKeydown, reloads, fetches, modeWrites, registrations, commands, settingsReads };
   loaded.push(carrier);
   return carrier;
 }
@@ -310,8 +326,8 @@ const EXPECTED_COMMANDS = [
 ];
 
 (async () => {
-  // ---- carrier A: a plain browser, no Desktop bridge and no mode marker ----
-  const web = loadPlugin({ bridge: false, search: "" });
+  // ---- carrier A: a plain browser, no platform stamp ----
+  const web = loadPlugin({ platform: undefined });
 
   // The plugin must no longer own a global key listener: the official shortcut
   // service is the single keyboard owner now.
@@ -340,6 +356,10 @@ const EXPECTED_COMMANDS = [
     const result = web.commands.get(id).resolve({ region: "page", modal: null, target: null });
     if (result.status !== "blocked") {
       throw new Error("web: " + id + " resolved to " + result.status + " on a browser carrier; it must refuse");
+    }
+    // A refused command must not have fired a request at the restart route.
+    if (web.fetches.length !== 0) {
+      throw new Error("web: a blocked Restart still issued a request; saw " + JSON.stringify(web.fetches.map((call) => call.url)));
     }
   }
 
@@ -382,8 +402,8 @@ const EXPECTED_COMMANDS = [
     throw new Error("web: the page does not explain which rows are Desktop-only");
   }
 
-  // ---- carrier B: the Desktop shell, detected through its preload bridge ----
-  const desktop = loadPlugin({ bridge: true, search: "" });
+  // ---- carrier B: the Desktop shell, detected through the platform stamp ----
+  const desktop = loadPlugin({ platform: "win32" });
   for (const id of EXPECTED_COMMANDS) {
     if (!desktop.commands.has(id)) throw new Error("desktop: command " + id + " was not contributed");
   }
@@ -393,9 +413,9 @@ const EXPECTED_COMMANDS = [
     if (restartDefaults[profile] === undefined) throw new Error("desktop: Restart has no default for " + profile);
   }
   /*
-   * Under the shell, Restart must be HANDLED and ride the Desktop action bridge.
-   * Nothing may write the `dsh-desktop` namespace: the mode switches are gone, and
-   * that namespace belongs to the Desktop settings page.
+   * Under the shell, Restart must be HANDLED and POST to the plugin's own host
+   * route. Nothing may write the `dsh-desktop` namespace: the mode switches are
+   * gone, and that namespace belongs to the Desktop settings page.
    */
   const desktopRestart = desktop.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
   if (desktopRestart.status !== "handled") {
@@ -407,15 +427,17 @@ const EXPECTED_COMMANDS = [
     throw new Error("desktop: something wrote the dsh-desktop settings namespace; saw " + JSON.stringify(desktop.modeWrites));
   }
   /*
-   * The preload bridge is the preferred route and MUST win when it exists: the
-   * HTTP endpoint is only a fallback for a shell generation that ships no bridge.
+   * The host route is the whole restart mechanism: the shell exposes no restart
+   * bridge, so a handled Restart must have issued exactly one POST to it.
    */
-  if (!desktop.bridgeCalls.includes("restart")) {
-    throw new Error("desktop: Restart did not reach the preload bridge; saw " + JSON.stringify(desktop.bridgeCalls));
-  }
-  if (desktop.fetches.length !== 0) {
-    throw new Error("desktop: Restart fell back to HTTP although the preload bridge was available; saw "
+  const restartPosts = desktop.fetches.filter((call) =>
+    String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
+  if (restartPosts.length !== 1) {
+    throw new Error("desktop: Restart did not POST to " + RESTART_ROUTE + " exactly once; saw "
       + JSON.stringify(desktop.fetches.map((call) => call.url)));
+  }
+  if (String(desktop.fetches[0].url) !== RESTART_ROUTE) {
+    throw new Error("desktop: Restart posted to " + String(desktop.fetches[0].url) + " instead of " + RESTART_ROUTE);
   }
   if (desktop.reloads.length !== 0) throw new Error("desktop: something used a browser reload");
 
@@ -424,20 +446,19 @@ const EXPECTED_COMMANDS = [
     throw new Error("desktop: the browser-carrier note is shown under the shell");
   }
 
-  // ---- carrier C: the shell, detected through the URL marker alone ----
-  // The bridge and the marker are independent signals; a generation that ships
-  // only one of them must still be recognised as the shell.
-  const marker = loadPlugin({ bridge: false, search: "?dsh-desktop-mode=extended" });
-  const markerRestart = marker.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
-  if (markerRestart.status !== "handled") {
-    throw new Error("marker: Restart refused on a shell detected from the URL marker alone");
+  // ---- carrier C: a second platform value must be recognised too ----
+  // The stamp carries whichever `process.platform` the shell runs on; detection
+  // must not be hard-wired to one of them.
+  const mac = loadPlugin({ platform: "darwin" });
+  const macRestart = mac.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
+  if (macRestart.status !== "handled") {
+    throw new Error("darwin: Restart refused on a shell stamped with platform=darwin");
   }
-  // With no bridge the same command must fall back to the HTTP endpoint.
-  markerRestart.run();
+  macRestart.run();
   await flush();
-  if (marker.fetches.every((call) => !String(call.url).includes("/restart"))) {
-    throw new Error("marker: Restart had no bridge and did not fall back to the HTTP endpoint; saw "
-      + JSON.stringify(marker.fetches.map((call) => call.url)));
+  if (mac.fetches.every((call) => !String(call.url).includes(RESTART_ROUTE))) {
+    throw new Error("darwin: Restart did not reach " + RESTART_ROUTE + "; saw "
+      + JSON.stringify(mac.fetches.map((call) => call.url)));
   }
 
   // ---- carrier D: no archive stream at all ----
@@ -445,7 +466,7 @@ const EXPECTED_COMMANDS = [
   // lacks `remote.workspace` must still get the whole plugin, with the panel
   // failing open to an empty archive set. This is the assertion that keeps the
   // archive read out of the hard-gate `inject` array.
-  const noWorkspaces = loadPlugin({ bridge: false, search: "", omit: ["remote.workspace"] });
+  const noWorkspaces = loadPlugin({ platform: undefined, omit: ["remote.workspace"] });
   if (!noWorkspaces.registrations.has("dsh-permission-panel")) {
     throw new Error("no-archive: the settings section was not registered; a missing optional surface must not break activation");
   }
@@ -461,7 +482,7 @@ const EXPECTED_COMMANDS = [
   // is injected WITHOUT it, and must still reach `remote.settings.describe()`.
   // If those two are ever re-coupled, the panel hangs on "loading" — the same
   // silent shape as the original `settingsScope` bug.
-  const noSchema = loadPlugin({ bridge: false, search: "", omit: ["settingsSchema"] });
+  const noSchema = loadPlugin({ platform: undefined, omit: ["settingsSchema"] });
   const noSchemaPanel = noSchema.registrations.get("workspace-permissions");
   if (noSchemaPanel === undefined) {
     throw new Error("no-settings-schema: the permissions panel was not registered; its settings binding must not depend on settingsSchema");
@@ -510,9 +531,9 @@ const EXPECTED_COMMANDS = [
 
   console.log(
     "platform ok: web commands=" + web.commands.size + " no-keydown-listener=1"
-    + " desktop-bound-scope=1 detection=[bridge,marker] locale-parity=1"
+    + " desktop-bound-scope=1 detection=[dataset.platform] locale-parity=1"
     + " web-defaults=0 restart-only=1 no-desktop-namespace-write=1"
-    + " soft-workspaces=1",
+    + " soft-workspaces=1 restart-posts-to-host-route=1",
   );
 })().catch((error) => {
   console.error("platform FAILED:", error && error.stack ? error.stack : error);
