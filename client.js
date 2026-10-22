@@ -609,22 +609,48 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
+		 * Whether a restart was already requested and the host is on its way down.
+		 * Never cleared on success — the page is about to be torn down by the
+		 * relaunch — so a second press stays silent instead of firing a request the
+		 * shell can no longer serve.
+		 */
+		let restartPending = false;
+
+		/**
 		 * Ask the host to shut DSH down so the Desktop shell can relaunch it.
 		 *
 		 * The shell treats a host exit as a crash and shows its recovery dialog
 		 * whose default button (重启) performs the actual `app.relaunch()`; there is
 		 * no channel to relaunch directly, so this is the whole of the mechanism.
+		 *
+		 * Returns `"down"` when the host is definitively on its way out, `"retry"`
+		 * when the request never got an answer (a transient transport failure that
+		 * may be worth trying again). A `503` counts as `"down"`: the shell's
+		 * `dsh-app://` protocol handler answers it exactly when it has no live host
+		 * to forward to (`apps/desktop/lib/main.js`: `if (backend.host === void 0
+		 * …) return Response(null, {status: 503})`). Only an explicit refusal
+		 * (403/405/409) throws.
 		 */
 		async function desktopAction() {
-			const response = await fetch(RESTART_PATH, {
-				method: "POST",
-				credentials: "same-origin",
-				redirect: "error",
-				cache: "no-store",
-				headers: { "content-type": "application/json" },
-				body: "{}",
-			});
+			let response;
+			try {
+				response = await fetch(RESTART_PATH, {
+					method: "POST",
+					credentials: "same-origin",
+					redirect: "error",
+					cache: "no-store",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				});
+			} catch {
+				// No answer: the socket may have dropped as the host exited, or the
+				// request never left. Report it as retryable rather than latching.
+				return "retry";
+			}
+			// No live host to forward to: the restart already took the host down.
+			if (response.status === 503) return "down";
 			if (!response.ok) throw new Error("HTTP " + String(response.status));
+			return "down";
 		}
 
 		/** Late-bound translator for imperative (non-React) notices. */
@@ -680,11 +706,28 @@ window.__ModuleLoader__.load({
 		 * server, and the row that binds this shortcut is hidden there. The guard
 		 * keeps a stale binding (or a programmatic call) from firing a request at an
 		 * endpoint whose carrier cannot complete it.
+		 *
+		 * Idempotent per page: the first press asks once; further presses while the
+		 * host is going down do nothing, so a held-down key or a double tap cannot
+		 * turn into a second request that fails with `HTTP 503` (the shell has no
+		 * live host left to forward to at that point).
 		 */
 		async function restartApplication() {
 			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
+			if (restartPending) return;
+			restartPending = true;
 			notify(text("restarting"));
-			await desktopAction();
+			let outcome;
+			try {
+				outcome = await desktopAction();
+			} catch (cause) {
+				// A real refusal: let the next press try again instead of staying mute.
+				restartPending = false;
+				throw cause;
+			}
+			// The request got no answer: the host may still be up, so don't latch —
+			// a later press is allowed to try again. A definitive "down" stays latched.
+			if (outcome === "retry") restartPending = false;
 		}
 
 		/** Preset machine value that must pass an explicit risk gate before switching. */

@@ -40,6 +40,8 @@ dsh plugin --profile <profile> add "file:<绝对路径>/dsh-permission-panel-<ve
 
 为什么是「退出宿主」而不是「调用某个重启 API」：DSH Desktop 的 Electron 主进程 `spawn` 了这个宿主子进程，`child.on("close")` 无论退出码 0 还是非 0 都会进 `fail()` → `reportFatal()` → 官方恢复对话框，其默认按钮「重启」执行 `app.relaunch(); quitWithoutConfirmation()`。生产代码里 `app.relaunch()` 只有这一个入口——preload 无重启通道、IPC 无重启消息、`webServer` 无重启服务（`app.asar` 全盘字节扫描 `dshDesktopActions` / `dsh-desktop-mode` / `desktop/restart` 均 0 命中）。所以这条路由与官方「禁用第三方插件并重启」以及社区插件管理器的 `shell` 模式同构。浏览器半边据此判断载体：只认 `document.documentElement.dataset.platform`（Desktop preload 无条件写入），不存在所谓 preload 重启桥或 URL 标记。
 
+**浏览器半边对 503 的容忍**：宿主已经退出时，shell 的 `dsh-app://` 协议处理会直接返回 `503`（`apps/desktop/lib/main.js`：`if (backend.host === void 0 …) return Response(null, {status: 503})`），这在语义上是「重启已经在进行」，所以 `desktopAction()` 把 `503` 当作成功，只有 `403`/`405`/`409` 这类明确拒绝才抛错。`restartApplication()` 另有一个页面级幂等锁：第一次按下后 `restartPending` 置位，`503`/成功的路径**不清锁**（页面马上会被 relaunch 拆掉），因此连按、长按重复触发都不会再发第二次请求——否则第二次必然撞上 503，弹出「操作失败：HTTP 503」这种误报。而**请求完全没拿到回应（fetch 抛错）时反而要解锁**：那既可能是宿主已走出，也可能只是一次瞬时故障，锁死会让快捷键永久失效；真正的拒绝与无回应都清锁，让下一次按键还能重试。
+
 ## DSH 0.2.x 兼容面
 
 0.2.1 移除了本插件早期依赖的若干客户端面（`sessions.list` / `workspaces.list` 两个客户端快照、`configForms` / `settingsSchema` 两个设置服务）。当前实现只使用真实存在的面：

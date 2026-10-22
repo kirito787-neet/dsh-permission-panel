@@ -99,7 +99,7 @@ const RESTART_ROUTE = "/api/permission-panel/restart";
  * the suite proves a soft dependency really is soft: the plugin must still
  * activate and still register its sections.
  */
-function loadPlugin({ platform, omit = [] }) {
+function loadPlugin({ platform, omit = [], fetchImpl }) {
   const reloads = [];
   const fetches = [];
   const commands = new Map();
@@ -128,7 +128,10 @@ function loadPlugin({ platform, omit = [] }) {
   const previousDocument = global.document;
   global.window = fakeWindow;
   global.document = fakeDocument;
-  global.fetch = async (url, options) => { fetches.push({ url, options }); return { ok: true, status: 202 }; };
+  global.fetch = async (url, options) => {
+    fetches.push({ url, options });
+    return fetchImpl === undefined ? { ok: true, status: 202 } : fetchImpl(url, options);
+  };
 
   // Re-load the module against this window/document so the plugin closes over them.
   captured = null;
@@ -441,6 +444,88 @@ const EXPECTED_COMMANDS = [
   }
   if (desktop.reloads.length !== 0) throw new Error("desktop: something used a browser reload");
 
+  /*
+   * A second press while the host is already going down must stay silent.
+   *
+   * The shell's app-protocol handler answers 503 once it has no live host to
+   * forward to, and the page is about to be torn down by the relaunch. Firing a
+   * second request there would surface as "操作失败：HTTP 503" — a false alarm
+   * about the very restart that is succeeding. Pressing again must be a no-op.
+   */
+  desktopRestart.run();
+  await flush();
+  const restartPostsAfterSecondPress = desktop.fetches.filter((call) =>
+    String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
+  if (restartPostsAfterSecondPress.length !== 1) {
+    throw new Error("desktop: a second Restart press fired another POST; the command must be idempotent "
+      + "while a restart is pending (saw " + restartPostsAfterSecondPress.length + " posts)");
+  }
+
+  /*
+   * A `503` from the shell means "the host is already going down" — the shell
+   * answers it exactly when it has no live host to forward to. That is success,
+   * not failure, and it must latch: pressing again must not fire another request
+   * (which the shell could only answer with another 503, surfacing as
+   * "操作失败：HTTP 503"). Observed through the POST count, since the failure
+   * toast is not modeled here.
+   */
+  {
+    const carrier = loadPlugin({ platform: "win32", fetchImpl: async () => ({ ok: false, status: 503 }) });
+    const gesture = carrier.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
+    if (gesture.status !== "handled") throw new Error("503-carrier: Restart did not resolve to handled");
+    gesture.run();
+    await flush();
+    gesture.run();
+    await flush();
+    const posts = carrier.fetches.filter((call) =>
+      String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
+    if (posts.length !== 1) {
+      throw new Error("503-carrier: a 503 is success and must latch — expected exactly one POST, saw " + posts.length);
+    }
+  }
+
+  /*
+   * A transport error (no answer at all) is treated as RETRYABLE: the host may
+   * still be up, so the guard resets and a later press is allowed to try again.
+   * This is deliberately different from 503 — a transient blip must not leave the
+   * shortcut permanently mute. Observed as a second POST on the next press.
+   */
+  {
+    const carrier = loadPlugin({ platform: "win32", fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
+    const gesture = carrier.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
+    if (gesture.status !== "handled") throw new Error("dropped-socket-carrier: Restart did not resolve to handled");
+    gesture.run();
+    await flush();
+    gesture.run();
+    await flush();
+    const posts = carrier.fetches.filter((call) =>
+      String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
+    if (posts.length !== 2) {
+      throw new Error("dropped-socket-carrier: a no-answer fetch must stay retryable — expected 2 posts, saw " + posts.length);
+    }
+  }
+
+  /*
+   * An explicit refusal is a real error and must NOT latch the page mute: the
+   * next press has to reach the host again. Same observation channel (POST
+   * count): a refused press that reset the guard yields a second POST.
+   */
+  {
+    const refused = loadPlugin({ platform: "win32", fetchImpl: async () => ({ ok: false, status: 409 }) });
+    const gesture = refused.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
+    if (gesture.status !== "handled") throw new Error("409-carrier: Restart did not resolve to handled");
+    gesture.run();
+    await flush();
+    gesture.run();
+    await flush();
+    const posts = refused.fetches.filter((call) =>
+      String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
+    if (posts.length !== 2) {
+      throw new Error("409-carrier: a refused restart must allow a later retry, not latch the page mute "
+        + "(expected 2 posts, saw " + posts.length + ")");
+    }
+  }
+
   const desktopTree = renderSettings(desktop);
   if (collect(desktopTree, (entry) => hasClass(entry, "dshk-platformNote")).length !== 0) {
     throw new Error("desktop: the browser-carrier note is shown under the shell");
@@ -533,7 +618,8 @@ const EXPECTED_COMMANDS = [
     "platform ok: web commands=" + web.commands.size + " no-keydown-listener=1"
     + " desktop-bound-scope=1 detection=[dataset.platform] locale-parity=1"
     + " web-defaults=0 restart-only=1 no-desktop-namespace-write=1"
-    + " soft-workspaces=1 restart-posts-to-host-route=1",
+    + " soft-workspaces=1 restart-posts-to-host-route=1"
+    + " restart-idempotent=1 503-latches=1 no-answer-retries=1 explicit-refusal-throws=1",
   );
 })().catch((error) => {
   console.error("platform FAILED:", error && error.stack ? error.stack : error);
