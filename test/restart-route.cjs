@@ -6,8 +6,9 @@
  * The restart shortcut is only useful if the browser half's POST actually lands
  * on a route that (a) exists, (b) is reachable from the Desktop app page, and
  * (c) will not let a random local page bring DSH down. The shipped shell exposes
- * no restart IPC, so this route is the entire mechanism — a silent rename or a
- * missing `inject` would break the shortcut with no error anywhere.
+ * no restart IPC and no relaunch hook, so this route plus the detached helper it
+ * spawns are the entire mechanism — a silent rename, a missing `inject`, or a
+ * helper that never gets spawned would break the shortcut with no error anywhere.
  *
  * What is asserted
  * ----------------
@@ -26,12 +27,15 @@
  * - No cookie → 403 in both shapes. This route is `exact`, so it bypasses the
  *   `/api` prefix fence; without the cookie requirement a bare `curl -X POST`
  *   (or a probe that only sets `Origin`) would restart DSH.
- * - Non-Desktop host (no `dsh-desktop-host` in argv) → 409, and nothing exits.
- * - A 202 schedules `process.exit` only after the response has been written.
- * - A 202 first reports `{kind:"fatal"}` over the host IPC channel, so the
- *   shell's recovery dialog shows our sentence instead of the tail of this
- *   process's stderr (which is whatever another plugin last logged). Refused
- *   requests must send nothing.
+ * - Non-Desktop host (no `dsh-desktop-host` in argv) → 409, and nothing is
+ *   spawned or killed.
+ * - A 202 spawns exactly one detached helper and schedules a kill of the
+ *   *parent* process (the Electron main process) — never of this process, which
+ *   would make the shell show its crash dialog instead of restarting silently.
+ * - The helper payload carries the parent PID, this process's execPath and a
+ *   relaunch environment with `ELECTRON_RUN_AS_NODE` stripped (otherwise the app
+ *   would come back as a node script runner).
+ * - No Electron runtime (plain `node`) → 500, no spawn.
  * - A real end-to-end pass: the handler is mounted on a real `http` server and
  *   reached with Node's own `fetch`, forwarding exactly the way the shell does
  *   (delete `host`/`origin`/`cookie`/`sec-fetch-site`, inject the host cookie).
@@ -42,7 +46,10 @@
  */
 const fs = require("fs");
 const http = require("http");
+const os = require("os");
 const path = require("path");
+const { tmpdir } = os;
+const { join } = path;
 
 const indexPath = path.resolve(process.argv[2] ?? path.join(__dirname, "..", "index.js"));
 const clientPath = path.resolve(process.argv[3] ?? path.join(__dirname, "..", "client.js"));
@@ -50,6 +57,9 @@ const clientPath = path.resolve(process.argv[3] ?? path.join(__dirname, "..", "c
 /** The authority the host is listening on; the gate compares `host` against it. */
 const OWN_ORIGIN = "http://127.0.0.1:59666";
 const OWN_HOST = "127.0.0.1:59666";
+
+/** Fake Electron main PID: the process the route must kill. */
+const MAIN_PID = 4242;
 
 const failures = [];
 const check = (label, condition) => {
@@ -110,36 +120,59 @@ function desktopForwardedRequest(overrides = {}) {
 }
 
 /**
- * Load index.js against a fake ctx, with a fake `process` (argv + spied exit) so
- * neither the test nor the real host process is touched.
+ * Load index.js against fake `process` and `spawn` doubles, so neither the test
+ * nor any real process is touched.
  */
-function loadHost(argv) {
+function loadHost(argv, options = {}) {
   const source = fs.readFileSync(indexPath, "utf8");
   // index.js is ESM. Both `apply` and `inject` are declared with plain
   // `function` / `const` and only re-exported at the bottom, so stripping the
-  // export forms leaves real bindings in scope.
+  // export forms leaves real bindings in scope. The `node:child_process`,
+  // `node:os` and `node:path` imports are replaced by injected parameters
+  // (`spawn` is a double; `tmpdir`/`join` are real, side-effect-free helpers) so
+  // the helper launch can be observed and nothing on disk is touched.
   const esm = source
+    .replace(/^\s*import\s*\{[^}]*\}\s*from\s*"node:child_process"\s*;?/mu, "")
+    .replace(/^\s*import\s*\{[^}]*\}\s*from\s*"node:os"\s*;?/mu, "")
+    .replace(/^\s*import\s*\{[^}]*\}\s*from\s*"node:path"\s*;?/mu, "")
     .replace(/\bexport\s*\{[^}]*\}\s*;?/u, "")
     .replace(/\bexport\s+const\s+/u, "const ")
     .replace(/\bexport\s+function\s+/u, "function ");
+  if (/\bimport\s/u.test(esm.replace(/"[^"]*"/gu, '""'))) {
+    throw new Error("index.js gained an import this test cannot shim; update loadHost");
+  }
   const moduleShim = { exports: {} };
   const exits = [];
-  const sent = [];
+  const kills = [];
+  const spawns = [];
   const fakeProcess = {
     argv,
+    ppid: options.ppid ?? MAIN_PID,
+    execPath: options.execPath ?? "C:\\Program Files\\DeepSeek Harness\\DeepSeek Harness.exe",
+    cwd: () => options.cwd ?? "C:\\Users\\u\\.dsh\\profiles\\desktop",
+    env: options.env ?? { PATH: "/usr/bin", ELECTRON_RUN_AS_NODE: "1", KEEP_ME: "yes" },
+    versions: options.versions ?? { electron: "44.7.0", node: "24.21.0" },
     exit: (code) => { exits.push(code); },
-    send: (message) => { sent.push(message); },
+    kill: (pid, signal) => { kills.push({ pid, signal }); },
   };
-  const fn = new Function("module", "exports", "process", `${esm}\n;return { apply, inject };`);
-  const { apply, inject } = fn(moduleShim, moduleShim.exports, fakeProcess);
-  return { apply, inject, exits, sent };
+  const fakeSpawn = (file, args, spawnOptions) => {
+    spawns.push({ file, args, options: spawnOptions });
+    if (options.spawnThrows === true) throw new Error("spawn EACCES");
+    return { pid: 9999, unref() {} };
+  };
+  const fn = new Function(
+    "module", "exports", "process", "spawn", "tmpdir", "join",
+    `${esm}\n;return { apply, inject };`,
+  );
+  const { apply, inject } = fn(moduleShim, moduleShim.exports, fakeProcess, fakeSpawn, tmpdir, join);
+  return { apply, inject, exits, kills, spawns };
 }
 
 /** Register the route against a fake ctx and capture it. */
 function register(argv, options = {}) {
-  const { apply, inject, exits, sent } = loadHost(argv);
+  const host = loadHost(argv, options);
   const getOrigin = options.getOrigin ?? (() => OWN_ORIGIN);
-  check("inject must be exactly [\"webServer\"]", Array.isArray(inject) && inject.length === 1 && inject[0] === "webServer");
+  check("inject must be exactly [\"webServer\"]", Array.isArray(host.inject) && host.inject.length === 1 && host.inject[0] === "webServer");
   const routes = [];
   const ctx = {
     webServer: {
@@ -151,11 +184,11 @@ function register(argv, options = {}) {
   // `apply` must not need the bound port: `getOrigin()` throws until `listen`
   // has bound, and activation races that bind. A throwing getOrigin here proves
   // registration survives it.
-  apply(ctx);
+  host.apply(ctx);
   check("apply must register exactly one route", routes.length === 1);
   const route = routes[0];
   check("route.kind must be exact", route?.kind === "exact");
-  return { route, inject, exits, sent };
+  return { route, ...host };
 }
 
 /** Run one request through the captured handler, then let scheduled timers fire. */
@@ -167,10 +200,18 @@ async function run(route, req) {
   } catch (error) {
     thrown = error;
   }
-  // The 202 path schedules `process.exit` after EXIT_DELAY_MS (250); wait past
-  // that so the exit intent is observable on the fake process.
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  // The 202 path schedules the parent kill after KILL_DELAY_MS (300); wait past
+  // that so the kill intent is observable on the fake process.
+  await new Promise((resolve) => setTimeout(resolve, 450));
   return { res, thrown };
+}
+
+/** Parse the payload the helper would read from its environment. */
+function helperPayload(host) {
+  const spawn = host.spawns[0];
+  const raw = spawn?.options?.env?.DSH_PERMISSION_PANEL_RESTART;
+  if (typeof raw !== "string") return null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 (async () => {
@@ -198,7 +239,7 @@ async function run(route, req) {
     const remote = await run(desktop.route, {
       method: "POST",
       socket: { remoteAddress: "10.0.0.5" },
-      headers: { host: "10.0.0.5:59666", origin: "http://10.0.0.5:59666" },
+      headers: { host: "10.0.0.5:59666", origin: "http://10.0.0.5:59666", cookie: "a=b" },
     });
     check("a non-loopback peer must be refused with 403", remote.res.status === 403);
   }
@@ -209,34 +250,51 @@ async function run(route, req) {
     check("a request with the " + header + " header must be refused with 403", res.status === 403);
   }
 
-  // Same-origin browser shape.
+  // Nothing so far may have spawned a helper or killed anything.
+  {
+    const before = { spawns: desktop.spawns.length, kills: desktop.kills.length };
+    check("refused requests must not spawn a helper", before.spawns === 0);
+    check("refused requests must not kill anything", before.kills === 0);
+  }
+
+  // Same-origin browser shape: accepted, helper spawned, parent kill scheduled.
   {
     const { res } = await run(desktop.route, sameOriginRequest());
     check("a same-origin loopback POST must be accepted with 202", res.status === 202);
     check("202 must set no-store", String(res.headers?.["cache-control"] ?? "") === "no-store");
-    check("a 202 must schedule process.exit(0)", desktop.exits.includes(0));
     check("the 202 body must be JSON ok", (() => { try { return JSON.parse(res.body).ok === true; } catch { return false; } })());
-    // The shell builds the dialog detail from `desktopErrorState(error).message`;
-    // on a bare host exit that is the stderr tail. Sending `fatal` first makes
-    // `DesktopHostProcess.fail()` (idempotent) publish our sentence instead.
-    check("a 202 must report one fatal IPC message first", desktop.sent.length === 1);
-    const notice = desktop.sent[0];
-    check("the IPC message must be a fatal event", notice?.type === "fatal");
-    check("the fatal message must be the restart notice", typeof notice?.message === "string" && /permission-panel/u.test(notice.message));
-    check("the fatal message must not be left as an omitted diagnostic", notice?.diagnostic === undefined);
+    check("a 202 must spawn exactly one relaunch helper", desktop.spawns.length === 1);
+
+    const spawn = desktop.spawns[0];
+    check("the helper must run on this process's execPath (the Electron binary)", spawn?.file === "C:\\Program Files\\DeepSeek Harness\\DeepSeek Harness.exe");
+    check("the helper must be a detached, unref'd `-e` script", spawn?.args?.[0] === "-e" && typeof spawn?.args?.[1] === "string" && spawn.options?.detached === true);
+    check("the helper must not inherit a visible console", spawn?.options?.windowsHide === true);
+    check("the helper must run as node (ELECTRON_RUN_AS_NODE=1)", spawn?.options?.env?.ELECTRON_RUN_AS_NODE === "1");
+
+    const payload = helperPayload(desktop);
+    check("the helper payload must carry the Electron main PID", payload?.mainPid === MAIN_PID);
+    check("the helper payload must carry this process's execPath", payload?.execPath === "C:\\Program Files\\DeepSeek Harness\\DeepSeek Harness.exe");
+    check("the relaunch env must strip ELECTRON_RUN_AS_NODE", payload !== null && payload.env?.ELECTRON_RUN_AS_NODE === undefined);
+    check("the relaunch env must keep the rest of the environment", payload?.env?.KEEP_ME === "yes");
+
+    // A parent kill, not a self exit: exiting this process would make the shell
+    // show its crash dialog instead of restarting silently.
+    check("a 202 must kill the Electron main process (not this one)", desktop.kills.length === 1 && desktop.kills[0].pid === MAIN_PID);
+    check("the parent kill must be a hard SIGKILL", desktop.kills[0]?.signal === "SIGKILL");
   }
 
   // Desktop forwarded shape: `origin` stripped, `host` re-added by undici.
   {
+    const before = desktop.spawns.length;
     const { res } = await run(desktop.route, desktopForwardedRequest());
     check("the Desktop forwarded shape (no origin, own host) must be accepted with 202", res.status === 202);
-    check("the Desktop forwarded shape must schedule process.exit(0)", desktop.exits.includes(0));
+    check("an accepted forwarded request must spawn a helper", desktop.spawns.length === before + 1);
   }
 
   // A forwarded-shaped request whose host is absent or foreign must be refused:
   // `host` is the only thing left to pin the request to this server.
   {
-    const { res } = await run(desktop.route, { method: "POST", socket: { remoteAddress: "127.0.0.1" }, headers: {} });
+    const { res } = await run(desktop.route, { method: "POST", socket: { remoteAddress: "127.0.0.1" }, headers: { cookie: "a=b" } });
     check("a loopback POST with no host and no origin must be refused with 403", res.status === 403);
   }
   {
@@ -268,23 +326,37 @@ async function run(route, req) {
     check("a sec-fetch-site: cross-site POST must be refused with 403", res.status === 403);
   }
 
-  // A refused request must not announce a shutdown to the shell: a 403 that
-  // still sent `fatal` would pop the recovery dialog on a failed attempt.
-  {
-    const before = desktop.sent.length;
-    const { res } = await run(desktop.route, sameOriginRequest({ cookie: undefined }));
-    check("a refused request must be answered 403", res.status === 403);
-    check("a refused request must not report a fatal event", desktop.sent.length === before);
-  }
-
   // ---- `dsh web` host (no Desktop marker in argv): must not tear the server down ----
   {
     const web = register(["C:\\Program Files\\nodejs\\node.exe", "C:\\x\\dsh\\bin.js", "web"]);
     check("web route path must still be the same", web.route?.path === clientRoute);
     const { res } = await run(web.route, sameOriginRequest());
     check("on a non-Desktop host the route must answer 409", res.status === 409);
-    check("on a non-Desktop host the route must NOT exit the server", web.exits.length === 0);
-    check("on a non-Desktop host the route must NOT report a fatal event", web.sent.length === 0);
+    check("on a non-Desktop host the route must NOT spawn a helper", web.spawns.length === 0);
+    check("on a non-Desktop host the route must NOT kill anything", web.kills.length === 0);
+  }
+
+  // ---- No Electron runtime (plain node): refuse rather than spawn a stranger ----
+  {
+    const plainNode = register(
+      ["C:\\Program Files\\nodejs\\node.exe", "x\\dsh-desktop-host\\lib\\index.js"],
+      { versions: { node: "24.21.0" } },
+    );
+    const { res } = await run(plainNode.route, sameOriginRequest());
+    check("without an Electron runtime the route must answer 500", res.status === 500);
+    check("without an Electron runtime the route must NOT spawn a helper", plainNode.spawns.length === 0);
+  }
+
+  // ---- Helper spawn failure surfaces as 500, not a silent 202 ----
+  {
+    const broken = register(
+      ["DeepSeek Harness.exe", "x\\dsh-desktop-host\\lib\\index.js"],
+      { spawnThrows: true },
+    );
+    const { res, thrown } = await run(broken.route, sameOriginRequest());
+    check("a helper spawn failure must answer 500", res.status === 500);
+    check("a helper spawn failure must not throw out of the handler", thrown === null);
+    check("a helper spawn failure must not kill anything", broken.kills.length === 0);
   }
 
   // ---- `getOrigin()` throws until the port is bound; activation must survive ----
@@ -328,7 +400,6 @@ async function run(route, req) {
     liveOrigin = `http://127.0.0.1:${server.address().port}`;
     const real = loadHost(fakeArgv);
     real.apply(ctx);
-    const exits = real.exits;
 
     // Forward exactly as `forwardWebRequest` does: delete the four headers, then
     // set the shell's own session cookie.
@@ -352,8 +423,8 @@ async function run(route, req) {
     check("a real forward carrying x-forwarded-for must be refused with 403", proxied.status === 403);
     await proxied.text();
 
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    check("the real accepted forward must schedule process.exit(0)", exits.includes(0));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    check("the real accepted forward must kill the Electron main process", real.kills.length === 1 && real.kills[0].signal === "SIGKILL");
     await new Promise((resolve) => server.close(resolve));
   }
 
@@ -364,7 +435,9 @@ async function run(route, req) {
   console.log(
     "restart-route ok: path=" + clientRoute + " inject=webServer method-gate=405"
     + " peer-gate=403 proxy-gate=403 cross-site=403 same-origin=202 desktop-forwarded=202"
-    + " no-host=403 foreign-host=403 cross-origin=403 web-carrier=409-no-exit"
-    + " lazy-origin=1 real-forward=202 exit-after-202=1 fatal-notice=1",
+    + " no-host=403 foreign-host=403 cross-origin=403 web-carrier=409-no-spawn"
+    + " lazy-origin=1 no-electron=500 spawn-failure=500"
+    + " helper-detached=1 payload-strips-electron-run-as-node=1"
+    + " kills-parent-not-self=1 real-forward=202",
   );
 })();

@@ -4,26 +4,49 @@
  * The permission panel itself lives in the browser half at ./client.js. This
  * node half exists so the loader has a row to mount (which is also what makes
  * client-modules scan the package for its `dsh.client` declaration) and it owns
- * the one thing the browser cannot do on its own: asking the Desktop shell to
- * bring the process down so it can relaunch.
+ * the one thing the browser cannot do on its own: actually restarting DSH
+ * Desktop, without leaving the user staring at the shell's crash dialog.
  *
- * How a restart actually works in DSH Desktop
- * -------------------------------------------
+ * How a restart works in DSH Desktop
+ * ----------------------------------
  * The Electron shell spawns this host as a child process and treats *any* exit
  * of that child as a crash (`DesktopBackendController` calls `fail()` on close,
- * for exit code 0 as well). `app.relaunch()` exists in exactly one production
- * place: the "restart" button of the official recovery dialog. There is no IPC
- * channel, no preload bridge and no webServer service that can ask the shell to
- * relaunch directly.
+ * for exit code 0 as well), so simply calling `process.exit(0)` pops the
+ * official recovery dialog ("应用无法启动或已意外停止。"). `app.relaunch()`
+ * exists in exactly one production place — the 重启 button of that dialog — and
+ * there is no IPC channel or preload bridge that asks the shell to relaunch.
  *
- * So the only correct restart from a plugin is the same thing the official
- * "disable third-party plugins" flow and the community plugin managers do:
- * answer the request, then exit the host. The shell then shows its recovery
- * dialog ("应用无法启动或已意外停止。") whose default button is 重启, and the
- * user's click performs the real relaunch. Anything else — spawning a second
- * host, killing the Electron parent — either leaks a duplicate host or loses
- * the window.
+ * So a plugin cannot restart in-process. What it *can* do, and what this file
+ * does, is restart from the outside:
+ *
+ *  1. Spawn a detached helper process that watches this host's parent — the
+ *     Electron main process — and, once it is gone, launches the app again.
+ *  2. Hard-terminate the Electron main process (the host's parent). Killing an
+ *     ancestor does not cascade on Windows (`process.kill(pid)`, i.e. a
+ *     TerminateProcess, or `taskkill` without `/T`), so the detached helper
+ *     survives; killing *this* process would not help because the shell would
+ *     then show its dialog.
+ *  3. The main process dies, this host loses its IPC channel and stops itself
+ *     (`process.once("disconnect", …)` in dsh-desktop-host), and the helper
+ *     relaunches the app a moment later. No dialog appears because the shell
+ *     process that would show it is already gone.
+ *
+ * The helper is a tiny inline script run on the same Electron binary in
+ * `ELECTRON_RUN_AS_NODE=1` mode, so it needs no external Node install; when it
+ * relaunches the app it strips that variable so the binary starts as the GUI app
+ * again. The whole chain was verified against real child processes on Windows.
+ *
+ * Windows Job Object note: Electron's main process puts this host inside a job
+ * with `KILL_ON_JOB_CLOSE`, which sounds fatal for the helper — but that job
+ * also sets `SILENT_BREAKAWAY_OK` (`LimitFlags = 0x3C00` on the shipping build),
+ * so any child a job member spawns leaves the job automatically. The detached
+ * helper therefore survives the job closing. Verified against a real job with
+ * the same flags: the helper was not in the job and outlived it.
  */
+
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /** Route path served to the browser half. Relative fetches from the app page reach it. */
 const RESTART_ROUTE = "/api/permission-panel/restart";
@@ -31,27 +54,27 @@ const RESTART_ROUTE = "/api/permission-panel/restart";
 /** argv marker that identifies the Desktop-owned host process. */
 const DESKTOP_HOST_MARKER = "dsh-desktop-host";
 
-/** Delay between flushing the 202 and tearing the host down. */
-const EXIT_DELAY_MS = 250;
+/** Delay between flushing the 202 and hard-terminating the Electron parent. */
+const KILL_DELAY_MS = 300;
 
 /**
- * Text the shell shows in its recovery dialog as the failure detail.
- *
- * The shell builds that detail from `desktopErrorState(error).message`, and when
- * the host merely exits the error message is `dsh desktop host stopped: <stderr
- * tail>` — the last thing some unrelated plugin logged, which is alarming and
- * has nothing to do with this restart. Reporting over the host's own `fatal` IPC
- * first (`DesktopHostProcess.fail()` is idempotent via `failureReported`) makes
- * this sentence the detail instead. The dialog itself, its default 「重启」
- * button, the crash report and the relaunch are all unchanged.
+ * Safety net after the parent is killed: if the IPC `disconnect` that normally
+ * stops this host does not arrive, exit anyway. Harmless — the shell that would
+ * show a crash dialog is already dead by then.
  */
-const RESTART_NOTICE = "dsh-permission-panel: 这是权限面板快捷键发起的重启，不是崩溃。点「重启」即可完成。"
-  + " (Restart requested by the permission panel shortcut — not a crash.)";
+const EXIT_FALLBACK_MS = 1500;
+
+/** Where the detached helper records what it did, for debugging. */
+const HELPER_LOG_NAME = "dsh-permission-panel-restart.log";
+
+/** Human sentence used when the helper cannot be started at all. */
+const RESTART_NOTICE = "dsh-permission-panel: could not start the relaunch helper."
+  + " (权限面板无法启动重启助手。)";
 
 /**
  * Whether this host process was spawned by DSH Desktop rather than by `dsh web`.
- * Restarting is only meaningful (and only safe) under the Desktop shell, because
- * only there does a host exit lead to the recovery dialog instead of a dead server.
+ * Relaunching is only meaningful under the Desktop shell: `dsh web` has no shell
+ * process to relaunch, so a hard exit there would just stop the server.
  */
 function isDesktopHostProcess(argv = process.argv) {
   return argv.some((arg) => typeof arg === "string" && arg.includes(DESKTOP_HOST_MARKER));
@@ -126,6 +149,94 @@ function writeJson(response, status, body, headers = {}) {
   response.end(JSON.stringify(body));
 }
 
+/** Readable one-liner for an unknown thrown value. */
+function describeCause(cause) {
+  if (cause instanceof Error) return cause.message;
+  if (cause !== null && typeof cause === "object" && typeof cause.message === "string") return cause.message;
+  return String(cause);
+}
+
+/**
+ * Source of the detached helper script.
+ *
+ * Runs on the same Electron binary in node mode. It takes its payload from the
+ * environment (no quoting problems), waits for the Electron main process to
+ * disappear, then launches the app and checks that it stayed up — retrying,
+ * because the single-instance lock the old process released may take a moment to
+ * free.
+ */
+const HELPER_SOURCE = [
+  'const { spawn } = require("node:child_process");',
+  'const fs = require("node:fs");',
+  'const payload = JSON.parse(process.env.DSH_PERMISSION_PANEL_RESTART);',
+  'const log = (m) => { try { fs.appendFileSync(payload.logFile, new Date().toISOString() + " " + m + "\\n"); } catch {} };',
+  'const sleep = (ms) => new Promise((r) => setTimeout(r, ms));',
+  'const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };',
+  'async function main() {',
+  '  log("helper start mainPid=" + payload.mainPid + " execPath=" + payload.execPath);',
+  '  const deadline = Date.now() + 20000;',
+  '  while (alive(payload.mainPid) && Date.now() < deadline) await sleep(120);',
+  '  if (alive(payload.mainPid)) { log("main still alive after timeout; aborting"); return 1; }',
+  '  log("main gone; launching app");',
+  '  await sleep(700);',
+  '  for (let i = 0; i < 10; i++) {',
+  '    let child;',
+  '    try {',
+  '      child = spawn(payload.execPath, [], { cwd: payload.cwd, detached: true, stdio: "ignore", windowsHide: true, env: payload.env });',
+  '    } catch (error) { log("spawn threw " + error.message); await sleep(500); continue; }',
+  '    let exited = "pending";',
+  '    child.on("exit", (code) => { exited = code; });',
+  '    await sleep(900);',
+  '    if (exited === "pending") { try { child.unref(); } catch {} log("relaunch ok pid=" + child.pid + " attempt=" + i); return 0; }',
+  '    log("relaunch died code=" + exited + " attempt=" + i);',
+  '    await sleep(400);',
+  '  }',
+  '  log("relaunch FAILED after retries");',
+  '  return 1;',
+  '}',
+  'main().then((code) => process.exit(code), (error) => { log("helper crashed " + ((error && error.stack) || error)); process.exit(1); });',
+].join("\n");
+
+/**
+ * Start the detached helper that will relaunch DSH after the parent dies.
+ *
+ * @param mainPid - PID of the Electron main process (this host's parent).
+ * @returns true when a helper process was actually spawned.
+ */
+function spawnRestartHelper(mainPid) {
+  // Without an Electron runtime there is nothing to relaunch with; refuse
+  // rather than spawn an unrelated `node` binary.
+  if (typeof process.versions?.electron !== "string") return false;
+
+  const appEnv = { ...process.env };
+  // The parent spawns this host with ELECTRON_RUN_AS_NODE=1; the relaunched app
+  // must NOT inherit it or the binary would come back as a node script runner.
+  delete appEnv.ELECTRON_RUN_AS_NODE;
+
+  const payload = {
+    mainPid,
+    execPath: process.execPath,
+    cwd: process.cwd(),
+    logFile: join(tmpdir(), HELPER_LOG_NAME),
+    env: appEnv,
+  };
+  const helperEnv = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: "1",
+    DSH_PERMISSION_PANEL_RESTART: JSON.stringify(payload),
+  };
+
+  const child = spawn(process.execPath, ["-e", HELPER_SOURCE], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+    env: helperEnv,
+  });
+  if (typeof child.pid !== "number" || child.pid <= 0) return false;
+  child.unref();
+  return true;
+}
+
 /**
  * Plugin entry — registers the restart route on the host webServer.
  *
@@ -166,8 +277,8 @@ function apply(ctx) {
       }
 
       if (!isDesktopHostProcess()) {
-        // Under `dsh web` there is no shell to relaunch the host; exiting would
-        // just stop the server with nothing to bring it back.
+        // Under `dsh web` there is no shell process to relaunch; killing the
+        // server here would just leave a dead page.
         writeJson(response, 409, {
           ok: false,
           error: "restart is only available in the DSH Desktop app",
@@ -175,24 +286,41 @@ function apply(ctx) {
         return;
       }
 
-      writeJson(response, 202, { ok: true, restarting: true });
-
-      // Tell the shell *why* the host is about to disappear, so its recovery
-      // dialog shows a sentence instead of the tail of this process's stderr.
-      // `process.send` exists because the shell spawns this process with an
-      // "ipc" stdio channel; if it is ever absent, the exit below still opens
-      // the same dialog with 重启 as its default button.
-      try {
-        process.send?.({ type: "fatal", message: RESTART_NOTICE }, () => {});
-      } catch {
-        // The restart still works; only the dialog detail stays generic.
+      // The parent of this host is the Electron main process. Kill *it* — not
+      // this process — so the detached helper outlives the teardown and the
+      // shell never gets the chance to show its crash dialog.
+      const mainPid = process.ppid;
+      if (typeof mainPid !== "number" || mainPid <= 0) {
+        writeJson(response, 500, { ok: false, error: "cannot locate the Desktop shell process" });
+        return;
       }
 
-      // Let the 202 reach the page before the process goes away. The timer is
-      // deliberately NOT unref'd: it must hold the loop for one tick so the
-      // response flushes, then exit — the shell notices the host is gone and
-      // shows its recovery dialog with 重启 as the default button.
-      setTimeout(() => process.exit(0), EXIT_DELAY_MS);
+      let helperStarted = false;
+      try {
+        helperStarted = spawnRestartHelper(mainPid);
+      } catch (cause) {
+        writeJson(response, 500, { ok: false, error: "could not spawn the relaunch helper: " + describeCause(cause) });
+        return;
+      }
+      if (!helperStarted) {
+        writeJson(response, 500, { ok: false, error: RESTART_NOTICE });
+        return;
+      }
+
+      writeJson(response, 202, { ok: true, restarting: true });
+
+      // Let the 202 reach the page before anything dies. The kill timer is kept
+      // alive by the server; the fallback exit is unref'd so it can never hold
+      // the process open on its own.
+      setTimeout(() => {
+        try {
+          process.kill(mainPid, "SIGKILL");
+        } catch {
+          // The parent may already be gone; the helper still relaunches.
+        }
+        const fallback = setTimeout(() => process.exit(0), EXIT_FALLBACK_MS);
+        fallback.unref?.();
+      }, KILL_DELAY_MS);
     },
   }), "dsh-permission-panel: restart route");
 }

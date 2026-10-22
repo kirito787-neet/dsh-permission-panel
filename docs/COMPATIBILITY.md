@@ -32,15 +32,21 @@ dsh plugin --profile <profile> add "file:<绝对路径>/dsh-permission-panel-<ve
 | --- | --- |
 | 方法 / 路径 | `POST /api/permission-panel/restart` |
 | 来源校验 | 对端必须是 loopback；拒绝 `forwarded` / `x-forwarded-for` / `x-real-ip`；`sec-fetch-site: cross-site` 拒绝；**两种形状都要求带非空 cookie**。`origin` 缺失时视为 Desktop 代理转发形状，另要求 `host` 等于本服务自己的 `getOrigin()` authority（`#648` 会剥掉 `origin`，转发用的 Node `fetch` 会由 undici 从目标 URL 把 `host` 补回来；cookie 则是 `forwardWebRequest` 无条件注入的）；`origin` 存在时要求 `host` 与它同源。cookie 不是认证（本机进程可以伪造任何头），但这条路由注册为 `exact`，`match()` 先查 exact 表、不走 `/api` 前缀的统一认证栅栏，要求 cookie 至少让裸 `curl -X POST` 或只设 `Origin` 的探测打不下来；能执行本地代码的进程本就能直接杀进程，这是所有 loopback-only 护栏的共同上限 |
-| 成功响应 | `202 {ok:true, restarting:true}`，随即先发一条宿主 IPC `{type:"fatal", message: <权限面板的说明>}`，再 `setTimeout(() => process.exit(0), 250)` |
-| 非 Desktop 宿主 | `409`，且**不**退出进程、不发 `fatal`（`dsh web` 下没有 shell 能把服务拉回来） |
-| 其它 | 非 POST → `405`（带 `allow: POST`）；未通过来源校验 → `403` |
+| 成功响应 | `202 {ok:true, restarting:true}`；随后延迟 `KILL_DELAY_MS`（300ms）对本宿主进程的**父进程**（Electron 主进程）发 `SIGKILL` |
+| 非 Desktop 宿主 | `409`，且**不**杀任何进程、不起助手（`dsh web` 下没有 shell 能把服务拉回来） |
+| 其它 | 非 POST → `405`（带 `allow: POST`）；未通过来源校验 → `403`；找不到父进程 / 起不了助手 / 没有 Electron 运行时 → `500` |
 
-那条 `fatal` 是为了对话框的 detail 可读：宿主只是退出时，shell 把 `dsh desktop host stopped` 与**本进程 stderr 的尾巴**拼成 detail，而 stderr 尾巴常常是别的插件最后打的一条日志（例如某插件每次启动都刷的一串告警），看上去像本插件崩了。`DesktopHostProcess.fail()` 有 `failureReported` 幂等锁，先到的 `fatal` 生效，所以主动报一句人话即可——对话框本身、默认「重启」按钮、崩溃报告与 `app.relaunch()` 全不变；`process.send` 不存在时静默跳过，重启照常。
+**为什么杀父进程而不是退出自己**：DSH Desktop 的 Electron 主进程 `spawn` 了这个宿主子进程，`child.on("close")` 无论退出码 0 还是非 0 都会进 `fail()` → `reportFatal()` → 官方崩溃恢复对话框。生产代码里 `app.relaunch()` 只有一个入口——那个对话框的「重启」按钮；preload 无重启通道、IPC 无重启消息、`webServer` 无重启服务（`app.asar` 全盘字节扫描 `dshDesktopActions` / `dsh-desktop-mode` / `desktop/restart` 均 0 命中）。所以插件层做不到 in-process 重启，改为**从外部重启**：
 
-为什么是「退出宿主」而不是「调用某个重启 API」：DSH Desktop 的 Electron 主进程 `spawn` 了这个宿主子进程，`child.on("close")` 无论退出码 0 还是非 0 都会进 `fail()` → `reportFatal()` → 官方恢复对话框，其默认按钮「重启」执行 `app.relaunch(); quitWithoutConfirmation()`。生产代码里 `app.relaunch()` 只有这一个入口——preload 无重启通道、IPC 无重启消息、`webServer` 无重启服务（`app.asar` 全盘字节扫描 `dshDesktopActions` / `dsh-desktop-mode` / `desktop/restart` 均 0 命中）。所以这条路由与官方「禁用第三方插件并重启」以及社区插件管理器的 `shell` 模式同构。浏览器半边据此判断载体：只认 `document.documentElement.dataset.platform`（Desktop preload 无条件写入），不存在所谓 preload 重启桥或 URL 标记。
+1. 起一个 detached 助手（同一 Electron 二进制，`ELECTRON_RUN_AS_NODE=1`，`stdio:"ignore"`，`windowsHide:true`，`-e` 内联脚本，载荷走环境变量 `DSH_PERMISSION_PANEL_RESTART`）轮询主进程 PID，确认它消失后再 `spawn` 应用把 `ELECTRON_RUN_AS_NODE` 去掉重新拉起。
+2. 对主进程发 `SIGKILL`。Windows 上 `process.kill(pid)` 是 `TerminateProcess`，**不级联**子进程（对比 `taskkill /T` 会连 detached 助手一起杀，绝不能用），所以助手活得下来。
+3. 主进程一死，本宿主的 IPC 通道断开，`dsh-desktop-host` 的 `process.once("disconnect", …)` 自行优雅退出；助手随后把应用拉回来。负责弹崩溃对话框的 shell 进程已经不在了，所以**没有对话框**。
 
-**浏览器半边对 503 的容忍**：宿主已经退出时，shell 的 `dsh-app://` 协议处理会直接返回 `503`（`apps/desktop/lib/main.js`：`if (backend.host === void 0 …) return Response(null, {status: 503})`），这在语义上是「重启已经在进行」，所以 `desktopAction()` 把 `503` 当作成功，只有 `403`/`405`/`409` 这类明确拒绝才抛错。`restartApplication()` 另有一个页面级幂等锁：第一次按下后 `restartPending` 置位，`503`/成功的路径**不清锁**（页面马上会被 relaunch 拆掉），因此连按、长按重复触发都不会再发第二次请求——否则第二次必然撞上 503，弹出「操作失败：HTTP 503」这种误报。而**请求完全没拿到回应（fetch 抛错）时反而要解锁**：那既可能是宿主已走出，也可能只是一次瞬时故障，锁死会让快捷键永久失效；真正的拒绝与无回应都清锁，让下一次按键还能重试。
+**Windows Job Object 这条暗礁已经探明**：本机实测 Electron 主进程持有 5 个 job 句柄，全部带 `KILL_ON_JOB_CLOSE`，而宿主子进程确实位于其中一个（`LimitFlags = 0x3C00` = `KILL_ON_JOB_CLOSE | SILENT_BREAKAWAY_OK | BREAKAWAY_OK | DIE_ON_UNHANDLED_EXCEPTION`）。关键在于 `SILENT_BREAKAWAY_OK`：job 成员 `spawn` 出来的子进程会自动脱离 job，所以那个 detached 助手压根不在 job 里，job 关闭时不会被连坐。已用同一组 `0x3C00` 标志的真实 job 复现验证：助手 `IsProcessInJob` 为 false，主进程被杀、job 句柄关闭后它继续存活并成功拉起应用。反过来说，如果哪天 shell 改用不带 `SILENT_BREAKAWAY_OK` 的 job，这条机制就会静默失效——所以「助手是否在 job 里」是这套方案唯一的平台暗礁。
+
+这条链路已用真实子进程在 Windows 上验证（`test/restart-route.cjs` 用 fake `spawn`/`process` 断言协议，另有一组一次性实验确认 detached 助手能活过父进程被 `SIGKILL`，并在与真实环境同标志的 job 下验证过脱离）。浏览器半边据此判断载体：只认 `document.documentElement.dataset.platform`（Desktop preload 无条件写入），不存在所谓 preload 重启桥或 URL 标记。
+
+**浏览器半边对 503 的容忍**：主进程被杀后，页面多半已经收不到任何回应（连接被切断）；即使 shell 的 `dsh-app://` 协议处理先返回 `503`（`backend.host === void 0` 时 `return Response(null, {status: 503})`），语义上也是「重启已经在进行」，所以 `desktopAction()` 把 `503` 与「无回应」都当作成功、只有 `403`/`405`/`409` 这类明确拒绝才抛错。`restartApplication()` 另有一个页面级幂等锁：第一次确认后 `restartPending` 置位，成功/`503` 路径**不清锁**（页面马上会被重启拆掉），连按、长按都不会再发第二次请求；而**请求完全没拿到回应（fetch 抛错）时反而解锁**，避免一次瞬时故障让快捷键永久失效。真正的拒绝也清锁，让下一次按键还能重试。
 
 ## DSH 0.2.x 兼容面
 

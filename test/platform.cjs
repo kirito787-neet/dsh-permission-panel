@@ -32,21 +32,111 @@ let captured = null;
 
 /**
  * Build a document stub for one carrier.
+ *
+ * Elements are real little objects rather than bare placeholders: the restart
+ * confirmation card is plain DOM (built with `createElement`, wired with
+ * `addEventListener`), so the suite must be able to find the mounted card, read
+ * its buttons and click them. Anything dumber would make "does the card work"
+ * untestable, which is precisely the behaviour this suite exists to pin.
+ *
  * @param platform - value for `documentElement.dataset.platform`; `undefined`
  *   models a plain browser (the stamp is absent entirely).
  */
 const makeDocument = (platform) => {
+  const makeElement = (tag) => {
+    const element = {
+      tagName: String(tag).toUpperCase(),
+      style: {},
+      dataset: {},
+      className: "",
+      textContent: "",
+      innerHTML: "",
+      id: "",
+      type: "",
+      disabled: false,
+      children: [],
+      listeners: {},
+      setAttribute(name, value) { element[name] = value; },
+      getAttribute(name) { return element[name] ?? null; },
+      appendChild(child) { child.parent = element; element.children.push(child); return child; },
+      removeChild(child) { const at = element.children.indexOf(child); if (at >= 0) element.children.splice(at, 1); child.parent = undefined; return child; },
+      remove() {
+        // A real removal detaches the node from its parent; leaving it in the
+        // parent's child list would keep `querySelector` finding "closed" nodes.
+        element.removed = true;
+        const parent = element.parent;
+        if (parent !== undefined) {
+          const at = parent.children.indexOf(element);
+          if (at >= 0) parent.children.splice(at, 1);
+          element.parent = undefined;
+        }
+      },
+      focus() { element.focused = true; },
+      addEventListener(type, listener) { (element.listeners[type] ??= []).push(listener); },
+      removeEventListener(type, listener) {
+        const bucket = element.listeners[type];
+        if (bucket === undefined) return;
+        const at = bucket.indexOf(listener);
+        if (at >= 0) bucket.splice(at, 1);
+      },
+      /** Fire a listener the way a real click would, with a minimal event. */
+      click() {
+        for (const listener of element.listeners.click ?? []) {
+          listener({ target: element, currentTarget: element, preventDefault() {}, stopPropagation() {} });
+        }
+      },
+      /** Fire a listener the way a real keydown would. */
+      keydown(key) {
+        for (const listener of element.listeners.keydown ?? []) {
+          listener({ key, target: element, preventDefault() {}, stopPropagation() {} });
+        }
+      },
+    };
+    return element;
+  };
+
   const documentElement = { dataset: platform === undefined ? {} : { platform } };
-  const fakeBody = { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false };
+  const body = makeElement("body");
+  const head = makeElement("head");
+  const documentListeners = {};
   return {
-    body: fakeBody,
-    head: { appendChild() {} },
+    body,
+    head,
     documentElement,
-    createElement: () => ({ style: {}, dataset: {}, setAttribute() {}, remove() {}, appendChild() {} }),
-    getElementById: () => null,
-    addEventListener() {},
-    removeEventListener() {},
-    querySelector: () => null,
+    createElement: (tag) => makeElement(tag),
+    getElementById: (id) => {
+      const stack = [...body.children, ...head.children];
+      while (stack.length > 0) {
+        const node = stack.shift();
+        if (node.id === id) return node;
+        stack.push(...(node.children ?? []));
+      }
+      return null;
+    },
+    querySelector: (selector) => {
+      const token = selector.startsWith(".") ? selector.slice(1) : null;
+      if (token === null) return null;
+      const stack = [...body.children];
+      while (stack.length > 0) {
+        const node = stack.shift();
+        if (typeof node.className === "string" && node.className.split(/\s+/).includes(token)) return node;
+        stack.push(...(node.children ?? []));
+      }
+      return null;
+    },
+    addEventListener(type, listener) { (documentListeners[type] ??= []).push(listener); },
+    removeEventListener(type, listener) {
+      const bucket = documentListeners[type];
+      if (bucket === undefined) return;
+      const at = bucket.indexOf(listener);
+      if (at >= 0) bucket.splice(at, 1);
+    },
+    /** Fire a document-level listener (Escape handling, outside clicks). */
+    dispatch(type, event = {}) {
+      for (const listener of [...(documentListeners[type] ?? [])]) {
+        listener({ type, target: documentElement, preventDefault() {}, stopPropagation() {}, ...event });
+      }
+    },
   };
 };
 
@@ -225,7 +315,7 @@ function loadPlugin({ platform, omit = [], fetchImpl }) {
 
   global.window = previousWindow;
   global.document = previousDocument;
-  const carrier = { platform, windowKeydown, reloads, fetches, modeWrites, registrations, commands, settingsReads };
+  const carrier = { platform, document: fakeDocument, windowKeydown, reloads, fetches, modeWrites, registrations, commands, settingsReads };
   loaded.push(carrier);
   return carrier;
 }
@@ -321,7 +411,40 @@ const switchLabels = (tree) => collect(tree, (entry) => hasClass(entry, "dshk-ro
   .map((row) => collect(row, (entry) => hasClass(entry, "dshk-rowLabel")).map(explain).join(""))
   .filter((label) => label.length > 0);
 
+/**
+ * Find the first element in a carrier's document whose class list has a token.
+ * @param document - the stub document of the carrier under test.
+ * @param token - the class name to look for.
+ * @returns the element, or null.
+ */
+const findClass = (document, token) => {
+  const stack = [...document.body.children];
+  while (stack.length > 0) {
+    const node = stack.shift();
+    if (typeof node.className === "string" && node.className.split(/\s+/).includes(token)) return node;
+    stack.push(...(node.children ?? []));
+  }
+  return null;
+};
+
+/** Find a button inside a subtree by its exact text content. */
+const findButton = (root, text) => {
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.shift();
+    if (node === null || typeof node !== "object") continue;
+    if (node.tagName === "BUTTON" && node.textContent === text) return node;
+    stack.push(...(node.children ?? []));
+  }
+  return null;
+};
+
+/** Count the restart POSTs a carrier has issued so far. */
+const restartPostCount = (carrier) => carrier.fetches.filter((call) =>
+  String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST").length;
+
 const flush = async () => { for (let turn = 0; turn < 8; turn++) await Promise.resolve(); };
+
 
 /** The exact set of command ids the plugin contributes to the official service. */
 const EXPECTED_COMMANDS = [
@@ -360,9 +483,13 @@ const EXPECTED_COMMANDS = [
     if (result.status !== "blocked") {
       throw new Error("web: " + id + " resolved to " + result.status + " on a browser carrier; it must refuse");
     }
-    // A refused command must not have fired a request at the restart route.
+    // A refused command must not have fired a request at the restart route, and
+    // must not even open the confirmation card (there is nothing to confirm).
     if (web.fetches.length !== 0) {
       throw new Error("web: a blocked Restart still issued a request; saw " + JSON.stringify(web.fetches.map((call) => call.url)));
+    }
+    if (findClass(web.document, "dshk-restartCard") !== null) {
+      throw new Error("web: a blocked Restart still opened the confirmation card");
     }
   }
 
@@ -416,9 +543,10 @@ const EXPECTED_COMMANDS = [
     if (restartDefaults[profile] === undefined) throw new Error("desktop: Restart has no default for " + profile);
   }
   /*
-   * Under the shell, Restart must be HANDLED and POST to the plugin's own host
-   * route. Nothing may write the `dsh-desktop` namespace: the mode switches are
-   * gone, and that namespace belongs to the Desktop settings page.
+   * Under the shell, Restart must be HANDLED and OPEN THE CONFIRMATION CARD. It
+   * must not fire the restart yet: it is a destructive action and the card is the
+   * user's chance to back out. Nothing may write the `dsh-desktop` namespace: the
+   * mode switches are gone, and that namespace belongs to the Desktop settings page.
    */
   const desktopRestart = desktop.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
   if (desktopRestart.status !== "handled") {
@@ -429,14 +557,56 @@ const EXPECTED_COMMANDS = [
   if (desktop.modeWrites.length !== 0) {
     throw new Error("desktop: something wrote the dsh-desktop settings namespace; saw " + JSON.stringify(desktop.modeWrites));
   }
+  const card = findClass(desktop.document, "dshk-restartCard");
+  if (card === null) {
+    throw new Error("desktop: pressing Restart did not open the confirmation card; a destructive action must be confirmed first");
+  }
+  if (restartPostCount(desktop) !== 0) {
+    throw new Error("desktop: the confirmation card fired the restart before the user confirmed it");
+  }
+
+  // Escape cancels: the card must close and nothing may have been requested.
+  {
+    desktop.document.dispatch("keydown", { key: "Escape" });
+    if (findClass(desktop.document, "dshk-restartCard") !== null) {
+      throw new Error("desktop: Escape did not dismiss the restart card");
+    }
+    if (restartPostCount(desktop) !== 0) {
+      throw new Error("desktop: cancelling the restart card still fired a request");
+    }
+  }
+
   /*
-   * The host route is the whole restart mechanism: the shell exposes no restart
-   * bridge, so a handled Restart must have issued exactly one POST to it.
+   * Opening the card again and pressing Cancel must be equally inert.
    */
-  const restartPosts = desktop.fetches.filter((call) =>
-    String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
-  if (restartPosts.length !== 1) {
-    throw new Error("desktop: Restart did not POST to " + RESTART_ROUTE + " exactly once; saw "
+  desktopRestart.run();
+  await flush();
+  const reopened = findClass(desktop.document, "dshk-restartCard");
+  if (reopened === null) throw new Error("desktop: the restart card did not reopen on a second press");
+  const cancelButton = findButton(reopened, "restartCardCancel");
+  if (cancelButton === null) throw new Error("desktop: the restart card has no cancel button");
+  cancelButton.click();
+  if (findClass(desktop.document, "dshk-restartCard") !== null) {
+    throw new Error("desktop: the cancel button did not dismiss the restart card");
+  }
+  if (restartPostCount(desktop) !== 0) {
+    throw new Error("desktop: cancelling the restart card fired a request");
+  }
+
+  /*
+   * Confirming is the whole restart mechanism: the shell exposes no restart
+   * bridge, so confirming must POST exactly once to the plugin's own host route.
+   */
+  desktopRestart.run();
+  await flush();
+  const confirming = findClass(desktop.document, "dshk-restartCard");
+  if (confirming === null) throw new Error("desktop: the restart card did not open for the confirm case");
+  const confirmButton = findButton(confirming, "restartCardConfirm");
+  if (confirmButton === null) throw new Error("desktop: the restart card has no confirm button");
+  confirmButton.click();
+  await flush();
+  if (restartPostCount(desktop) !== 1) {
+    throw new Error("desktop: confirming did not POST to " + RESTART_ROUTE + " exactly once; saw "
       + JSON.stringify(desktop.fetches.map((call) => call.url)));
   }
   if (String(desktop.fetches[0].url) !== RESTART_ROUTE) {
@@ -445,84 +615,77 @@ const EXPECTED_COMMANDS = [
   if (desktop.reloads.length !== 0) throw new Error("desktop: something used a browser reload");
 
   /*
-   * A second press while the host is already going down must stay silent.
-   *
-   * The shell's app-protocol handler answers 503 once it has no live host to
-   * forward to, and the page is about to be torn down by the relaunch. Firing a
-   * second request there would surface as "操作失败：HTTP 503" — a false alarm
-   * about the very restart that is succeeding. Pressing again must be a no-op.
+   * A second confirm while the restart is pending must stay silent: the shell's
+   * app-protocol handler answers 503 once it has no live host to forward to, and
+   * the page is about to be torn down by the relaunch. Firing again would surface
+   * as "操作失败：HTTP 503" — a false alarm about the very restart that succeeds.
    */
-  desktopRestart.run();
+  confirmButton.click();
   await flush();
-  const restartPostsAfterSecondPress = desktop.fetches.filter((call) =>
-    String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
-  if (restartPostsAfterSecondPress.length !== 1) {
-    throw new Error("desktop: a second Restart press fired another POST; the command must be idempotent "
-      + "while a restart is pending (saw " + restartPostsAfterSecondPress.length + " posts)");
+  if (restartPostCount(desktop) !== 1) {
+    throw new Error("desktop: a second confirm fired another POST; the card must be idempotent "
+      + "while a restart is pending (saw " + restartPostCount(desktop) + " posts)");
   }
 
   /*
    * A `503` from the shell means "the host is already going down" — the shell
    * answers it exactly when it has no live host to forward to. That is success,
-   * not failure, and it must latch: pressing again must not fire another request
-   * (which the shell could only answer with another 503, surfacing as
-   * "操作失败：HTTP 503"). Observed through the POST count, since the failure
-   * toast is not modeled here.
+   * not failure, and it must latch: a second confirm must not fire another
+   * request (which the shell could only answer with another 503). Observed
+   * through the POST count, since the card's status line is not asserted here.
    */
   {
     const carrier = loadPlugin({ platform: "win32", fetchImpl: async () => ({ ok: false, status: 503 }) });
-    const gesture = carrier.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
-    if (gesture.status !== "handled") throw new Error("503-carrier: Restart did not resolve to handled");
-    gesture.run();
+    carrier.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null }).run();
     await flush();
-    gesture.run();
+    findButton(findClass(carrier.document, "dshk-restartCard"), "restartCardConfirm").click();
     await flush();
-    const posts = carrier.fetches.filter((call) =>
-      String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
-    if (posts.length !== 1) {
-      throw new Error("503-carrier: a 503 is success and must latch — expected exactly one POST, saw " + posts.length);
+    findButton(findClass(carrier.document, "dshk-restartCard"), "restartCardConfirm")?.click();
+    await flush();
+    if (restartPostCount(carrier) !== 1) {
+      throw new Error("503-carrier: a 503 is success and must latch — expected exactly one POST, saw " + restartPostCount(carrier));
     }
   }
 
   /*
    * A transport error (no answer at all) is treated as RETRYABLE: the host may
    * still be up, so the guard resets and a later press is allowed to try again.
-   * This is deliberately different from 503 — a transient blip must not leave the
-   * shortcut permanently mute. Observed as a second POST on the next press.
+   * Deliberately different from 503 — a transient blip must not leave the shortcut
+   * permanently mute. Observed as a second POST on the next confirm.
    */
   {
     const carrier = loadPlugin({ platform: "win32", fetchImpl: async () => { throw new TypeError("Failed to fetch"); } });
-    const gesture = carrier.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
-    if (gesture.status !== "handled") throw new Error("dropped-socket-carrier: Restart did not resolve to handled");
-    gesture.run();
+    carrier.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null }).run();
     await flush();
-    gesture.run();
+    findButton(findClass(carrier.document, "dshk-restartCard"), "restartCardConfirm").click();
     await flush();
-    const posts = carrier.fetches.filter((call) =>
-      String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
-    if (posts.length !== 2) {
-      throw new Error("dropped-socket-carrier: a no-answer fetch must stay retryable — expected 2 posts, saw " + posts.length);
+    findButton(findClass(carrier.document, "dshk-restartCard"), "restartCardConfirm")?.click();
+    await flush();
+    if (restartPostCount(carrier) !== 2) {
+      throw new Error("dropped-socket-carrier: a no-answer fetch must stay retryable — expected 2 posts, saw " + restartPostCount(carrier));
     }
   }
 
   /*
-   * An explicit refusal is a real error and must NOT latch the page mute: the
-   * next press has to reach the host again. Same observation channel (POST
-   * count): a refused press that reset the guard yields a second POST.
+   * An explicit refusal is a real error and must NOT latch the card mute: the next
+   * confirm has to reach the host again, and the card must report it rather than
+   * pretend the restart is under way. Same observation channel (POST count).
    */
   {
     const refused = loadPlugin({ platform: "win32", fetchImpl: async () => ({ ok: false, status: 409 }) });
-    const gesture = refused.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null });
-    if (gesture.status !== "handled") throw new Error("409-carrier: Restart did not resolve to handled");
-    gesture.run();
+    refused.commands.get("permissionPanel.restart").resolve({ region: "page", modal: null, target: null }).run();
     await flush();
-    gesture.run();
+    findButton(findClass(refused.document, "dshk-restartCard"), "restartCardConfirm").click();
     await flush();
-    const posts = refused.fetches.filter((call) =>
-      String(call.url).includes(RESTART_ROUTE) && call.options?.method === "POST");
-    if (posts.length !== 2) {
+    const status = findClass(refused.document, "dshk-restartError");
+    if (status === null) {
+      throw new Error("409-carrier: a refused restart must be reported on the card, not silently swallowed");
+    }
+    findButton(findClass(refused.document, "dshk-restartCard"), "restartCardConfirm")?.click();
+    await flush();
+    if (restartPostCount(refused) !== 2) {
       throw new Error("409-carrier: a refused restart must allow a later retry, not latch the page mute "
-        + "(expected 2 posts, saw " + posts.length + ")");
+        + "(expected 2 posts, saw " + restartPostCount(refused) + ")");
     }
   }
 
@@ -541,7 +704,11 @@ const EXPECTED_COMMANDS = [
   }
   macRestart.run();
   await flush();
-  if (mac.fetches.every((call) => !String(call.url).includes(RESTART_ROUTE))) {
+  const macCard = findClass(mac.document, "dshk-restartCard");
+  if (macCard === null) throw new Error("darwin: the restart card did not open");
+  findButton(macCard, "restartCardConfirm").click();
+  await flush();
+  if (restartPostCount(mac) !== 1) {
     throw new Error("darwin: Restart did not reach " + RESTART_ROUTE + "; saw "
       + JSON.stringify(mac.fetches.map((call) => call.url)));
   }
@@ -619,7 +786,8 @@ const EXPECTED_COMMANDS = [
     + " desktop-bound-scope=1 detection=[dataset.platform] locale-parity=1"
     + " web-defaults=0 restart-only=1 no-desktop-namespace-write=1"
     + " soft-workspaces=1 restart-posts-to-host-route=1"
-    + " restart-idempotent=1 503-latches=1 no-answer-retries=1 explicit-refusal-throws=1",
+    + " restart-idempotent=1 503-latches=1 no-answer-retries=1 explicit-refusal-throws=1"
+    + " card-opens=1 card-cancel-inert=1 card-escape-dismisses=1",
   );
 })().catch((error) => {
   console.error("platform FAILED:", error && error.stack ? error.stack : error);
