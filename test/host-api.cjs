@@ -187,6 +187,7 @@ let captured = null;
 global.document = {
   body: { nodeType: 1, appendChild() {}, removeChild() {}, contains: () => false },
   head: { appendChild() {} },
+  documentElement: { dataset: {} },
   createElement: () => ({ style: {}, dataset: {}, setAttribute() {}, remove() {}, appendChild() {} }),
   getElementById: () => null,
   addEventListener() {},
@@ -232,7 +233,9 @@ const runEffect = (body) => { const dispose = body(); return typeof dispose === 
  *
  * `sessions.list`, `workspaces.list`, `configForms` and `settingsSchema` are
  * absent on BOTH carriers: those are Host facts, not carrier facts.
- * @param desktop - whether to install the Desktop preload bridge.
+ * @param desktop - whether to install the Desktop preload's platform stamp
+ *   (`document.documentElement.dataset.platform`), which is the only carrier
+ *   signal the shipped shell actually provides.
  * @returns what the plugin asked for and which async reads it performed.
  */
 const activate = (desktop) => {
@@ -361,8 +364,15 @@ const activate = (desktop) => {
     ...previousWindow,
     location: { search: "" },
   };
-  if (desktop) fakeWindow.dshDesktopActions = { invoke: async (action) => { formsRead.push(action); } };
   global.window = fakeWindow;
+  // The Desktop shell stamps the document with `process.platform`; a plain
+  // browser leaves `dataset.platform` absent. This is the ONLY signal the two
+  // carriers differ by — there is no restart preload bridge to stub.
+  const previousDocument = global.document;
+  global.document = {
+    ...previousDocument,
+    documentElement: { dataset: desktop ? { platform: "win32" } : {} },
+  };
 
   captured = null;
   new Function("require", "window", "document", source)(requireStub, fakeWindow, global.document);
@@ -383,6 +393,7 @@ const activate = (desktop) => {
   // `sessions.list`, `workspaces.list`, `configForms`, or `settingsSchema`.
   captured.factory(requireStub).apply(ctx);
   global.window = previousWindow;
+  global.document = previousDocument;
 
   const Panel = registrations.get("workspace-permissions");
   /*

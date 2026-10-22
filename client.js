@@ -32,12 +32,12 @@ window.__ModuleLoader__.load({
 		 * written, so the document migrates forward on first change.
 		 */
 		const LEGACY_STORAGE_KEY = "dsh.hotkeyToolkit.v1";
-		/** Electron preload bridge exposing argument-free Desktop actions. */
-		const ACTIONS_BRIDGE = "dshDesktopActions";
-		/** Loopback fallback, used when the renderer runs without the preload bridge. */
-		const RESTART_PATH = "/api/desktop/restart";
-		/** URL marker the Electron main process appends when it owns the window. */
-		const MODE_MARKER = "dsh-desktop-mode";
+		/**
+		 * Host route that asks the Desktop shell to bring DSH down for a relaunch.
+		 * Registered by this package's own node half (index.js) on the host
+		 * `webServer`; the app page reaches it with a relative fetch.
+		 */
+		const RESTART_PATH = "/api/permission-panel/restart";
 
 		const zh = {
 			nav: "权限面板",
@@ -51,11 +51,18 @@ window.__ModuleLoader__.load({
 			switchSection: "快捷键开关",
 			switchSectionHint: "逐个启用或停用本插件提供的快捷键。停用后命令仍保留在官方快捷键列表中，键位与冲突检测都不变，只是按下时不执行（也不会拦截该按键）。",
 			switch_restart: "重启 DSH",
-			switchHint_restart: "重新启动 DSH Desktop 应用。",
+			switchHint_restart: "按下后弹出确认卡片；确认后 DSH 会自动关闭并重新启动。",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
 			cmdRestart: "重启 DSH（权限面板）",
 			cmdAliasRestart: "重启 DSH 重新启动",
 			restarting: "DSH 正在重启…",
+			/* Centered confirmation card shown when the Restart shortcut is pressed. */
+			restartCardTitle: "重启 DSH？",
+			restartCardBody: "DSH 会关闭并立即自动重新启动。正在运行的任务会被中断。",
+			restartCardCancel: "取消",
+			restartCardConfirm: "立即重启",
+			restartCardWorking: "正在重启 DSH…",
+			restartCardRetry: "没能联系上 DSH 服务，请再试一次。",
 			actionFailed: "操作失败：",
 			noShortcut: "快捷键未绑定或不可用。",
 			subpluginSection: "子插件",
@@ -148,11 +155,18 @@ window.__ModuleLoader__.load({
 			switchSection: "Shortcut switches",
 			switchSectionHint: "Enable or disable each shortcut this plugin contributes. A disabled command stays in the official shortcut list with its keys and conflict checks intact — it simply does not run when pressed (and does not swallow the key).",
 			switch_restart: "Restart DSH",
-			switchHint_restart: "Relaunches the DSH Desktop application.",
+			switchHint_restart: "Opens a confirmation card; confirming closes DSH and starts it again automatically.",
 			/* Labels shown as rows in the official shortcut list (Settings → Keyboard shortcuts). */
 			cmdRestart: "Restart DSH (Permission Panel)",
 			cmdAliasRestart: "restart DSH relaunch",
-			restarting: "DSH is restarting…",
+			restarting: "Restarting DSH…",
+			/* Centered confirmation card shown when the Restart shortcut is pressed. */
+			restartCardTitle: "Restart DSH?",
+			restartCardBody: "DSH will close and start again automatically. Running tasks will be interrupted.",
+			restartCardCancel: "Cancel",
+			restartCardConfirm: "Restart now",
+			restartCardWorking: "Restarting DSH…",
+			restartCardRetry: "Couldn't reach the DSH service — please try again.",
 			actionFailed: "Operation failed: ",
 			noShortcut: "The shortcut is unbound or unavailable.",
 			subpluginSection: "Sub-plugins",
@@ -340,6 +354,26 @@ window.__ModuleLoader__.load({
 		".dshk-entryHead{margin-bottom:10px}",
 		".dshk-entryHead h4{margin:0}",
 		".dshk-wpClose{font-size:12px}",
+		/* Restart confirmation card: frosted-glass sheet, squircle corners. */
+		".dshk-restartBackdrop{position:fixed;inset:0;z-index:2147483005;display:grid;place-items:center;padding:24px;background:rgba(14,16,20,.34);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%);animation:dshk-fade .16s ease-out}",
+		".dshk-restartCard{position:relative;width:min(400px,100%);padding:26px 26px 20px;text-align:center;color:var(--dsw-alias-label-primary,#e8eaee);background:linear-gradient(160deg,rgba(255,255,255,.14),rgba(255,255,255,.05));-webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);border:1px solid rgba(255,255,255,.22);box-shadow:0 24px 60px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.35),inset 0 -1px 0 rgba(255,255,255,.06);border-radius:26px;corner-shape:squircle;animation:dshk-pop .2s cubic-bezier(.2,.8,.3,1)}",
+		"@supports not (corner-shape:squircle){.dshk-restartCard{border-radius:22px}}",
+		".dshk-restartIcon{width:46px;height:46px;margin:0 auto 14px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(150deg,rgba(255,255,255,.22),rgba(255,255,255,.06));border:1px solid rgba(255,255,255,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.4)}",
+		".dshk-restartIcon svg{width:24px;height:24px;display:block}",
+		".dshk-restartTitle{margin:0 0 8px;font-size:16px;font-weight:600;letter-spacing:.01em}",
+		".dshk-restartBody{margin:0 0 20px;font-size:12.5px;line-height:1.65;color:var(--dsw-alias-label-secondary,#c8ccd4)}",
+		".dshk-restartActions{display:flex;gap:10px;justify-content:center}",
+		".dshk-restartBtn{font:inherit;font-size:13px;line-height:20px;flex:1;padding:9px 14px;border-radius:14px;corner-shape:squircle;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:inherit;cursor:pointer;transition:background .14s,transform .1s}",
+		".dshk-restartBtn:hover:not(:disabled){background:rgba(255,255,255,.16)}",
+		".dshk-restartBtn:active:not(:disabled){transform:scale(.98)}",
+		".dshk-restartBtn:disabled{opacity:.5;cursor:default}",
+		".dshk-restartBtnPrimary{border-color:transparent;background:linear-gradient(180deg,#4f8bff,#3b6fe0);color:#fff;box-shadow:0 6px 16px rgba(59,111,224,.42),inset 0 1px 0 rgba(255,255,255,.35)}",
+		".dshk-restartBtnPrimary:hover:not(:disabled){background:linear-gradient(180deg,#5c95ff,#4276ea)}",
+		".dshk-restartStatus{margin:12px 0 0;min-height:16px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,#c8ccd4)}",
+		".dshk-restartError{color:var(--dsw-alias-state-error-label,#e5675f)}",
+		"@keyframes dshk-fade{from{opacity:0}to{opacity:1}}",
+		"@keyframes dshk-pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}",
+		"@media (prefers-reduced-motion:reduce){.dshk-restartBackdrop,.dshk-restartCard{animation:none}}",
 		].join("\n");
 		const STYLE_ID = "dsh-permission-panel-styles";
 
@@ -586,46 +620,69 @@ window.__ModuleLoader__.load({
 		/**
 		 * Whether this page is carried by the DSH Desktop shell.
 		 *
-		 * The renderer is byte-identical on both carriers, so the shell has to be
-		 * detected from what only it contributes: the context-isolated
-		 * `dshDesktopActions` preload bridge, or the `dsh-desktop-mode` marker the
-		 * Electron main process appends to the window URL. A plain browser (the
-		 * `dsh web` carrier, or a remote browser session) has neither, and the
-		 * Desktop-only rows must not be offered there — restarting "DSH" and
-		 * switching a window mode are meaningless without the shell that owns them.
+		 * The Desktop preload stamps `document.documentElement.dataset.platform`
+		 * with `process.platform` (`darwin` / `win32` / `linux`) unconditionally, on
+		 * every page it owns, before any plugin bundle runs. That stamp is the only
+		 * signal the renderer can rely on: the shell exposes no restart bridge, and
+		 * the window URL carries no mode marker. A plain browser (the `dsh web`
+		 * carrier, or a remote browser session) has no stamp, and the Desktop-only
+		 * rows must not be offered there — there is no application to relaunch.
 		 *
-		 * Probed on every call rather than cached: the preload bridge is installed
-		 * before any bundle runs, but a plugin may be reloaded into a page whose
-		 * bridge arrives with a later generation, and a stale negative would
-		 * permanently hide rows the shell can serve.
+		 * Probed on every call rather than cached: the stamp lands on
+		 * `DOMContentLoaded` when the document element does not exist yet, and a
+		 * stale negative would permanently hide rows the shell can serve.
 		 */
 		function hasDesktopHost() {
-			if (typeof window === "undefined") return false;
+			if (typeof window === "undefined" || typeof document === "undefined") return false;
 			try {
-				const bridge = window[ACTIONS_BRIDGE];
-				if (bridge !== void 0 && bridge !== null && typeof bridge.invoke === "function") return true;
-				return new URLSearchParams(window.location.search).get(MODE_MARKER) !== null;
+				const platform = document.documentElement?.dataset?.platform;
+				return typeof platform === "string" && platform.length > 0;
 			} catch {
 				return false;
 			}
 		}
 
-		/** Invoke one argument-free Desktop action, preferring the preload bridge. */
-		async function desktopAction(action) {
-			const bridge = typeof window !== "undefined" ? window[ACTIONS_BRIDGE] : void 0;
-			if (bridge !== void 0 && bridge !== null && typeof bridge.invoke === "function") {
-				await bridge.invoke(action);
-				return;
+		/**
+		 * Whether a restart was already requested and the host is on its way down.
+		 * Never cleared on success — the page is about to be torn down by the
+		 * relaunch — so a second press stays silent instead of firing a request the
+		 * shell can no longer serve.
+		 */
+		let restartPending = false;
+
+		/**
+		 * Ask the host to restart DSH.
+		 *
+		 * The host half answers 202 and then hard-terminates the Electron main
+		 * process while a detached helper relaunches the app, so the page dies
+		 * mid-flight and most responses are never actually seen. That is why a
+		 * dropped socket is not an error here.
+		 *
+		 * Returns `"down"` when the host has taken the request (202, or a 503 from
+		 * the shell's `dsh-app://` handler once it has no live host to forward to —
+		 * `apps/desktop/lib/main.js`: `if (backend.host === void 0 …) return
+		 * Response(null, {status: 503})`), and `"retry"` when the request got no
+		 * answer at all. Only an explicit refusal (403/405/409/500) throws.
+		 */
+		async function desktopAction() {
+			let response;
+			try {
+				response = await fetch(RESTART_PATH, {
+					method: "POST",
+					credentials: "same-origin",
+					redirect: "error",
+					cache: "no-store",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				});
+			} catch {
+				// The page is usually torn down while the request is in flight, so a
+				// dropped socket is the normal outcome of a successful restart.
+				return "retry";
 			}
-			const response = await fetch(RESTART_PATH, {
-				method: "POST",
-				credentials: "same-origin",
-				redirect: "error",
-				cache: "no-store",
-				headers: { "content-type": "application/json" },
-				body: "{}",
-			});
+			if (response.status === 503) return "down";
 			if (!response.ok) throw new Error("HTTP " + String(response.status));
+			return "down";
 		}
 
 		/** Late-bound translator for imperative (non-React) notices. */
@@ -674,17 +731,151 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Relaunch DSH Desktop through the Desktop-owned restart action.
+		 * Fire the restart request and settle the confirmation card's state.
 		 *
 		 * Desktop-only by nature: a browser carrier has no application to relaunch,
-		 * and the row that binds this shortcut is hidden there. The guard keeps a
-		 * stale binding (or a programmatic call) from firing a request at an
-		 * endpoint the carrier does not serve.
+		 * and the guard keeps a stale binding (or a programmatic call) from firing a
+		 * request whose carrier cannot complete it.
+		 *
+		 * Idempotent per page: the first confirm posts once; the `restartPending`
+		 * latch is never cleared on a definitive "down" (the page is about to be
+		 * torn down by the relaunch) so a held-down key or a double click cannot turn
+		 * into a second request that the shell can only answer with `HTTP 503`.
 		 */
-		async function restartApplication() {
+		async function restartApplication(ui) {
 			if (!hasDesktopHost()) throw new Error(text("desktopOnly"));
-			notify(text("restarting"));
-			await desktopAction("restart");
+			if (restartPending) return;
+			restartPending = true;
+			if (ui !== undefined) ui.busy();
+			let outcome;
+			try {
+				outcome = await desktopAction();
+			} catch (cause) {
+				// A real refusal: let the next press try again instead of staying mute.
+				restartPending = false;
+				if (ui !== undefined) ui.failed(describe(cause));
+				else notify(text("actionFailed") + describe(cause));
+				return;
+			}
+			// No answer at all: the host may still be up, so don't latch — a later
+			// press may try again. A definitive "down" stays latched.
+			if (outcome === "retry") {
+				restartPending = false;
+				if (ui !== undefined) ui.failed(text("restartCardRetry"));
+				else notify(text("restartCardRetry"));
+				return;
+			}
+			if (ui !== undefined) ui.working();
+		}
+
+		/**
+		 * Build and mount the frosted-glass restart confirmation card.
+		 *
+		 * Plain DOM (like {@link notify}) rather than a React portal: the plugin has
+		 * no root of its own to portal into, and imperative nodes keep the card
+		 * independent of whatever the settings page is rendering. Returns nothing;
+		 * the card drives itself through `restartApplication`.
+		 */
+		function showRestartCard() {
+			if (typeof document === "undefined") return;
+			// One card at a time: a second press while it is open must not stack.
+			if (document.querySelector(".dshk-restartBackdrop") !== null) return;
+
+			const backdrop = document.createElement("div");
+			backdrop.className = "dshk-restartBackdrop";
+
+			const card = document.createElement("div");
+			card.className = "dshk-restartCard";
+			card.setAttribute("role", "dialog");
+			card.setAttribute("aria-modal", "true");
+
+			const icon = document.createElement("div");
+			icon.className = "dshk-restartIcon";
+			// A restart glyph, drawn inline so the card needs no asset.
+			icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>';
+
+			const title = document.createElement("h4");
+			title.className = "dshk-restartTitle";
+			title.textContent = text("restartCardTitle");
+
+			const body = document.createElement("p");
+			body.className = "dshk-restartBody";
+			body.textContent = text("restartCardBody");
+
+			const actions = document.createElement("div");
+			actions.className = "dshk-restartActions";
+
+			const cancelBtn = document.createElement("button");
+			cancelBtn.type = "button";
+			cancelBtn.className = "dshk-restartBtn";
+			cancelBtn.textContent = text("restartCardCancel");
+
+			const confirmBtn = document.createElement("button");
+			confirmBtn.type = "button";
+			confirmBtn.className = "dshk-restartBtn dshk-restartBtnPrimary";
+			confirmBtn.textContent = text("restartCardConfirm");
+
+			const status = document.createElement("p");
+			status.className = "dshk-restartStatus";
+			status.setAttribute("role", "status");
+
+			actions.appendChild(cancelBtn);
+			actions.appendChild(confirmBtn);
+			card.appendChild(icon);
+			card.appendChild(title);
+			card.appendChild(body);
+			card.appendChild(actions);
+			card.appendChild(status);
+			backdrop.appendChild(card);
+			document.body.appendChild(backdrop);
+			try { confirmBtn.focus(); } catch { /* focus is a nicety */ }
+
+			let settled = false;
+			const close = () => {
+				if (settled) return;
+				settled = true;
+				backdrop.remove();
+				document.removeEventListener("keydown", onKey, true);
+			};
+			const onKey = (event) => {
+				if (event.key === "Escape") {
+					event.preventDefault();
+					close();
+				}
+			};
+			document.addEventListener("keydown", onKey, true);
+
+			cancelBtn.addEventListener("click", close);
+			backdrop.addEventListener("mousedown", (event) => {
+				if (event.target === backdrop) close();
+			});
+
+			const ui = {
+				busy() {
+					confirmBtn.disabled = true;
+					cancelBtn.disabled = true;
+					status.className = "dshk-restartStatus";
+					status.textContent = text("restarting");
+				},
+				working() {
+					confirmBtn.disabled = true;
+					cancelBtn.disabled = true;
+					status.className = "dshk-restartStatus";
+					status.textContent = text("restartCardWorking");
+				},
+				failed(message) {
+					confirmBtn.disabled = false;
+					cancelBtn.disabled = false;
+					status.className = "dshk-restartStatus dshk-restartError";
+					status.textContent = message;
+				},
+			};
+
+			confirmBtn.addEventListener("click", () => {
+				if (restartPending) return;
+				// Keep the card up while the page is torn down; the relaunch replaces it.
+				restartApplication(ui).catch((cause) => ui.failed(text("actionFailed") + describe(cause)));
+			});
 		}
 
 		/** Preset machine value that must pass an explicit risk gate before switching. */
@@ -1639,9 +1830,7 @@ window.__ModuleLoader__.load({
 					modals: ["settings", "shortcuts"],
 					resolve: () => {
 						if (!hasDesktopHost()) return { status: "blocked", reason: text("desktopOnly") };
-						return { status: "handled", run: () => {
-							restartApplication().catch((cause) => notify(text("actionFailed") + describe(cause)));
-						} };
+						return { status: "handled", run: () => { showRestartCard(); } };
 					},
 				});
 			});
